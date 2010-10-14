@@ -73,7 +73,7 @@ static usCount GetUsCount()
 
 static size_t sizes[RECORDS];
 static void *ptrs[RECORDS];
-static struct mallocation2 mdata[RECORDS], *mdataptrs[RECORDS];
+static struct n1519_mallocation2 mdata[RECORDS], *mdataptrs[RECORDS];
 
 int main(void)
 {
@@ -95,7 +95,7 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        ptrs[n]=malloc(32768);
+        ptrs[n]=n1519_malloc(32768);
       }
       end=GetUsCount();
       printf("malloc() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
@@ -103,7 +103,7 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        free(ptrs[n]);
+        n1519_free(ptrs[n]);
         ptrs[n]=0;
       }
       end=GetUsCount();
@@ -113,13 +113,13 @@ int main(void)
     {
       size_t count=RECORDS, size=32768;
       start=GetUsCount();
-      batch_alloc1(NULL, ptrs, &count, &size, 0, 0, 0);
+      n1519_batch_alloc1(NULL, ptrs, &count, &size, 0, 0, 0);
       end=GetUsCount();
       printf("batch_alloc1() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
 
       count=RECORDS;
       start=GetUsCount();
-      batch_alloc1(NULL, ptrs, &count, NULL, 0, 0, 0);
+      n1519_batch_alloc1(NULL, ptrs, &count, NULL, 0, 0, 0);
       end=GetUsCount();
       printf("batch_alloc1() does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
     }
@@ -133,7 +133,7 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        ptrs[n]=malloc(sizes[n]);
+        ptrs[n]=n1519_malloc(sizes[n]);
       }
       end=GetUsCount();
       printf("malloc() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
@@ -141,7 +141,7 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        free(ptrs[n]);
+        n1519_free(ptrs[n]);
         ptrs[n]=0;
       }
       end=GetUsCount();
@@ -157,7 +157,7 @@ int main(void)
         mdata[n].size=sizes[n];
       }
       start=GetUsCount();
-      batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
+      n1519_batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
       end=GetUsCount();
       printf("batch_alloc2() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
 
@@ -165,7 +165,7 @@ int main(void)
       for(n=0; n<RECORDS; n++)
         mdata[n].size=0;
       start=GetUsCount();
-      batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
+      n1519_batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
       end=GetUsCount();
       printf("batch_alloc2() does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
     }

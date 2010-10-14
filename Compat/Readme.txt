@@ -2,15 +2,13 @@ N1519 C99 compatible implementation
 -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 (C) 2010 Niall Douglas http://www.nedproductions.biz/
 
-Thanks to various proprietary extensions on the supported platforms, this has a fairly complete implementation. It will make use of OpenMP if available and if your system allocator allows parallel entry then the performance of the batch operators is pretty good.
+Thanks to various proprietary extensions on the supported platforms, this has a fairly complete implementation apart from address space reservation and constant time frees. It will make use of OpenMP if available and if your system allocator allows parallel entry then the performance of the batch operators is pretty good. Except when using aligned blocks on MSVC, you can interchange blocks returned by the n1519_* functions and the standard C99 malloc API.
 
 Notes for Microsoft Windows:
 -=-=-=-=-=-=-=-=-=-=-=-=-=-=
-Note that due to MSVC's CRT free() implementation not being able to handle aligned blocks allocated via its own _aligned_* functions, a msvcfree() function is supplied which does handle this. You should do:
+Note that due to MSVC's CRT free() implementation not being able to handle aligned blocks allocated via its own _aligned_* functions, you CANNOT interchange aligned blocks with non-aligned ones. The n1519_free() function knows how to handle both kinds of block, but n1519_realloc() does not.
 
-#define free(x) msvcfree(x)
-
-... in any code using this library, though note that msvcfree() has poor performance when freeing aligned blocks.
+Non-relocating resizes are supported thanks to a proprietary API.
 
 Notes for POSIX:
 -=-=-=-=-=-=-=-=

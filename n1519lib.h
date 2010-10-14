@@ -120,7 +120,7 @@ extern "C" {
 #ifndef MALLOCATION2_DEFINED
 #define MALLOCATION2_DEFINED
 /*! \brief The structure used by the batch_alloc2() function */
-struct mallocation2 {
+struct n1519_mallocation2 {
   void *ptr;
   size_t size;
 };
@@ -129,7 +129,7 @@ struct mallocation2 {
 #ifndef MALLOCATION5_DEFINED
 #define MALLOCATION5_DEFINED
 /*! \brief The structure used by the batch_alloc5() function */
-struct mallocation5 {
+struct n1519_mallocation5 {
   void *ptr;
   size_t size;
   size_t alignment;
@@ -139,24 +139,30 @@ struct mallocation5 {
 #endif
 
 /*! \brief Allocates aligned memory */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *aligned_alloc(size_t alignment, size_t size);
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_alloc(size_t alignment, size_t size);
 /*! \brief Resizes aligned memory */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *aligned_realloc(void *ptr, size_t alignment, size_t size);
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_realloc(void *ptr, size_t alignment, size_t size);
 /*! \brief Performs a sequence of same-sized allocation, resizes and deallocations */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags);
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **n1519_batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags);
 /*! \brief Performs a sequences of allocations, resizes and deallocations */
-N1519MALLOCEXTSPEC _Bool batch_alloc2(int *errnos, struct mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags);
+N1519MALLOCEXTSPEC _Bool n1519_batch_alloc2(int *errnos, struct n1519_mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags);
 /*! \brief Performs a sequences of allocations, resizes and deallocations */
-N1519MALLOCEXTSPEC _Bool batch_alloc5(int *errnos, struct mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count);
+N1519MALLOCEXTSPEC _Bool n1519_batch_alloc5(int *errnos, struct n1519_mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count);
+/*! \brief Allocates zeroed memory */
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_calloc(size_t nmemb, size_t size);
+/*! \brief Frees both aligned and non-aligned blocks */
+N1519MALLOCEXTSPEC void n1519_free(void *ptr);
+/*! \brief Allocates zeroed memory */
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_malloc(size_t size);
 /*! \brief Returns the size of an existing block */
-N1519MALLOCEXTSPEC size_t malloc_usable_size(void *ptr);
+N1519MALLOCEXTSPEC size_t n1519_malloc_usable_size(void *ptr);
+/*! \brief Allocates zeroed memory */
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_realloc(void *ptr, size_t size);
 /*! \brief A non-relocating aligned resize */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *try_aligned_realloc(void *ptr, size_t alignment, size_t size);
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_try_aligned_realloc(void *ptr, size_t alignment, size_t size);
 /*! \brief A non-relocating resize */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *try_realloc(void *ptr, size_t size);
+N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_try_realloc(void *ptr, size_t size);
 
-/*! \brief Frees both aligned and non-aligned blocks on MSVC */
-N1519MALLOCEXTSPEC void msvcfree(void *ptr);
 
 #if defined(__cplusplus)
 }

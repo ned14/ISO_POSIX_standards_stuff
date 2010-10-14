@@ -688,7 +688,7 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
   malloc2 flag options. These non-portable functions provide
   additional functionality beyond those traditionally provided by
   a memory allocator. You may pass custom flags in the bits
-  specified by M2_CUSTOM_FLAGS_MASK.
+  specified by M2_USERFLAGS_MASK.
 */
 
 #ifndef M2_FLAGS_DEFINED
@@ -696,22 +696,18 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 
 #define M2_ZERO_MEMORY          (1<<0)
 #define M2_PREVENT_MOVE         (1<<1)
-#define M2_ALWAYS_MMAP          (1<<2)
-#define M2_RESERVED1            (1<<3)
-#define M2_RESERVED2            (1<<4)
-#define M2_RESERVED3            (1<<5)
-#define M2_RESERVED4            (1<<6)
-#define M2_RESERVED5            (1<<7)
-#define M2_RESERVE_ISMULTIPLIER (1<<15)
-/* 7 bits is given to the address reservation specifier.
-This lets you set a multiplier (bit 15 set) or a 1<< shift value.
-*/
-#define M2_RESERVE_MASK         0x00007f00
-#define M2_RESERVE_MULT(n)      (M2_RESERVE_ISMULTIPLIER|(((n)<<8)&M2_RESERVE_MASK))
-#define M2_RESERVE_SHIFT(n)     (((n)<<8)&M2_RESERVE_MASK)
-#define M2_FLAGS_MASK           0x0000ffff
-#define M2_CUSTOM_FLAGS_BEGIN   (1<<16)
-#define M2_CUSTOM_FLAGS_MASK    0xffff0000
+#define M2_CONSTANT_TIME        (1<<2)
+#define M2_RESERVE_IS_MULT      (1<<3)
+#define M2_BATCH_IS_ALL_ALLOC   (1<<4)
+#define M2_BATCH_IS_ALL_REALLOC (1<<5)
+#define M2_BATCH_IS_ALL_FREE    (1<<6)
+
+/* Proprietary */
+#define M2_ALWAYS_MMAP          (1<<15)
+
+#define M2_USERFLAGS_FIRST      (1<<16)
+#define M2_USERFLAGS_LAST       (1<<31)
+#define M2_USERFLAGS_MASK       0xffff0000
 
 #endif /* M2_FLAGS_DEFINED */
 
@@ -1278,29 +1274,29 @@ void** mspace_independent_comalloc(mspace msp, size_t n_elements,
 /*
   mspace_malloc2 behaves as mspace_malloc, but provides additional
   functionality. Setting alignment to a non-zero value is
-  identical to using mspace_memalign(). Flags may be set to:
+  identical to using mspace_memalign(). Setting reserve to a non-zero
+  value allows subsequent realloc() to not relocate the block.
+  Flags may be set to:
 
   * M2_ZERO_MEMORY:      Sets the contents of the allocated chunk to
                          zero.
   * M2_ALWAYS_MMAP:      Always allocate as though mmap_threshold
                          were being exceeded. This is useful for large
                          arrays which frequently extend.
-  * M2_RESERVE_MULT(n):  Reserve n times as much address space such
-                         that mmapped realloc() is much faster.
-  * M2_RESERVE_SHIFT(n): Reserve (1<<n) bytes of address space such
-                         that mmapped realloc() is much faster.
 
   Note when setting RESERVE sizes that on some platforms (e.g. Windows)
   page tables are constructed for the reservation size. On x86/x64
   Windows this costs 2Kb of kernel memory per Mb reserved, and as on
   x86 kernel memory is not abundant you should not be excessive.
 */
-void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, unsigned flags);
+void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, size_t reserve, unsigned flags);
 
 /*
   mspace_realloc2 behaves as mspace_realloc, but provides additional
   functionality. Setting alignment to a non-zero value is
-  identical to using mspace_memalign(). Flags may be set to:
+  identical to using mspace_memalign(). Setting reserve to a non-zero
+  value allows subsequent realloc() to not relocate the block.
+  Flags may be set to:
 
   * M2_ZERO_MEMORY:      Sets any increase in the allocated chunk to
                          zero. Note that this zeroes only the increase
@@ -1316,10 +1312,6 @@ void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, unsigned flags)
                          bit will not necessarily mmap a chunk which
                          isn't already mmapped, but it will force a
                          mmapped chunk if new memory needs allocating.
-  * M2_RESERVE_MULT(n):  Reserve n times as much address space such
-                         that mmapped realloc() is much faster.
-  * M2_RESERVE_SHIFT(n): Reserve (1<<n) bytes of address space such
-                         that mmapped realloc() is much faster.
 
   Note when setting RESERVE sizes that on some platforms (e.g. Windows)
   page tables are constructed for the reservation size. On x86/x64
@@ -1329,7 +1321,15 @@ void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, unsigned flags)
   mmapped chunk has exceeded its reservation space and a new
   reservation space needs to be created.
 */
-void* mspace_realloc2(mspace msp, void* mem, size_t newsize, size_t alignment, unsigned flags);
+void* mspace_realloc2(mspace msp, void* mem, size_t newsize, size_t alignment, size_t reserve, unsigned flags);
+
+/*
+  mspace_free2 behaves as mspace_free, but provides additional
+  functionality. Flags may be set to:
+
+  * M2_CONSTANT_TIME:    Prevents segment coalescing during this call.
+*/
+void mspace_free2(mspace msp, void* mem, unsigned flags);
 
 /*
   mspace_footprint() returns the number of bytes obtained from the
@@ -1711,10 +1711,10 @@ static FORCEINLINE void* posix_direct_mmap(size_t size) {
 
 #define MMAP_DEFAULT(s)                     posix_mmap(s)
 #define MUNMAP_DEFAULT(h, a, s)             munmap((a), (s))
-#define DIRECT_MMAP_DEFAULT(h, s, f)        posix_direct_mmap(s)
+#define DIRECT_MMAP_DEFAULT(h, s, r, f)     posix_direct_mmap((s), (r))
 #if HAVE_MREMAP
 #define MREMAP_DEFAULT(addr, osz, nsz, mv)  mremap((addr), (osz), (nsz), (mv))
-#define DIRECT_MREMAP_DEFAULT(h, addr, osz, nsz, mv, f) mremap((addr), (osz), (nsz), (mv))
+#define DIRECT_MREMAP_DEFAULT(h, addr, osz, nsz, mv, r, f) posix_direct_mremap((addr), (osz), (nsz), (mv), (r))
 #endif /* HAVE_MREMAP */
 
 #else /* WIN32 */
@@ -1808,21 +1808,13 @@ we turn it on on 32 bit and disable it on 64 bit.
 #endif
 #endif
 
-static FORCEINLINE void* win32direct_mmap(void **handle, size_t size, unsigned flags) {
+static FORCEINLINE void* win32direct_mmap(void **handle, size_t size, size_t reservesize, unsigned flags) {
   void* ptr = 0;
-  unsigned mremapvalue = (flags & M2_RESERVE_MASK)>>8;
-#if 0
-  mremapvalue=4;
-  flags|=M2_RESERVE_ISMULTIPLIER;
-#endif
-#if 0
-  mremapvalue=22;/*4Mb*/
-#endif
-  if (!mremapvalue) {
+  if (flags & M2_RESERVE_IS_MULT) reservesize*=size;
+  if (!reservesize) {
     ptr = VirtualAlloc(0, size, MEM_RESERVE|MEM_TOP_DOWN|MEM_COMMIT, PAGE_READWRITE);
   }
   else {
-    size_t reservesize = (flags & M2_RESERVE_ISMULTIPLIER) ? size*mremapvalue : SIZE_T_ONE<<mremapvalue;
 #if WIN32_DIRECT_USE_FILE_MAPPINGS
     HANDLE fmh;
     if (reservesize < size)
@@ -1866,7 +1858,7 @@ static FORCEINLINE void* win32direct_mmap(void **handle, size_t size, unsigned f
 }
 
 /* Implementation of mremap for direct MMAP */
-static FORCEINLINE void* win32direct_mremap(void **handle, void *ptr, size_t oldsize, size_t newsize, int flags, unsigned flags2) {
+static FORCEINLINE void* win32direct_mremap(void **handle, void *ptr, size_t oldsize, size_t newsize, int flags, size_t reserve, unsigned flags2) {
   void* newptr = 0;
   if (!*handle)
     return MFAIL; /* We only resize file mappings reserved with M2_RESERVE_* */
@@ -1944,17 +1936,17 @@ static FORCEINLINE int win32munmap(void *handle, void* ptr, size_t size) {
   return 0;
 }
 
-#define MMAP_DEFAULT(s)                        win32mmap(s)
-#define MUNMAP_DEFAULT(h, a, s)                win32munmap((h), (a), (s))
-#define DIRECT_MMAP_DEFAULT(h, s, f)           win32direct_mmap((h), (s), (f))
-#define DIRECT_MREMAP_DEFAULT(h, a, os, ns, f, f2) win32direct_mremap((h), (a), (os), (ns), (f), (f2))
+#define MMAP_DEFAULT(s)                               win32mmap(s)
+#define MUNMAP_DEFAULT(h, a, s)                       win32munmap((h), (a), (s))
+#define DIRECT_MMAP_DEFAULT(h, s, r, f)               win32direct_mmap((h), (s), (r), (f))
+#define DIRECT_MREMAP_DEFAULT(h, a, os, ns, f, r, f2) win32direct_mremap((h), (a), (os), (ns), (f), (r), (f2))
 #endif /* WIN32 */
 
 #ifndef MREMAP_DEFAULT
 #define MREMAP_DEFAULT(addr, osz, nsz, mv)  MFAIL
 #endif /* MREMAP_DEFAULT */
 #ifndef DIRECT_MREMAP_DEFAULT
-#define DIRECT_MREMAP_DEFAULT(h, addr, osz, nsz, mv, f2) MFAIL
+#define DIRECT_MREMAP_DEFAULT(h, addr, osz, nsz, mv, r, f2) MFAIL
 #endif /* DIRECT_MREMAP_DEFAULT */
 
 #endif /* HAVE_MMAP */
@@ -1977,48 +1969,48 @@ static FORCEINLINE int win32munmap(void *handle, void* ptr, size_t size) {
  * Define CALL_MMAP/CALL_MUNMAP/CALL_DIRECT_MMAP
  */
 #if HAVE_MMAP
-    #define USE_MMAP_BIT                       (SIZE_T_ONE)
+    #define USE_MMAP_BIT                                   (SIZE_T_ONE)
 
     #ifdef MUNMAP
-        #define CALL_MUNMAP(h, a, s)            MUNMAP((h), (a), (s))
+        #define CALL_MUNMAP(h, a, s)                       MUNMAP((h), (a), (s))
     #else /* MUNMAP */
-        #define CALL_MUNMAP(h, a, s)            MUNMAP_DEFAULT((h), (a), (s))
+        #define CALL_MUNMAP(h, a, s)                       MUNMAP_DEFAULT((h), (a), (s))
     #endif /* MUNMAP */
     #ifdef MMAP
-        #define CALL_MMAP(s, f)                 MMAP((s), (f))
+        #define CALL_MMAP(s, f)                            MMAP((s), (f))
     #else /* MMAP */
-        #define CALL_MMAP(s, f)                 MMAP_DEFAULT(s)
+        #define CALL_MMAP(s, f)                            MMAP_DEFAULT(s)
     #endif /* MMAP */
     #ifdef MREMAP
-        #define CALL_MREMAP(a, os, ns, f)   MREMAP((a), (os), (ns), (f))
+        #define CALL_MREMAP(a, os, ns, f)                  MREMAP((a), (os), (ns), (f))
     #else /* MREMAP */
-        #define CALL_MREMAP(a, os, ns, f)   MREMAP_DEFAULT((a), (os), (ns), (f))
+        #define CALL_MREMAP(a, os, ns, f)                  MREMAP_DEFAULT((a), (os), (ns), (f))
     #endif /* MREMAP */
 
     #ifdef DIRECT_MMAP
-        #define CALL_DIRECT_MMAP(h, s, f)       DIRECT_MMAP((h), (s), (f))
+        #define CALL_DIRECT_MMAP(h, s, r, f)               DIRECT_MMAP((h), (s), (r), (f))
     #else /* DIRECT_MMAP */
-        #define CALL_DIRECT_MMAP(h, s, f)       DIRECT_MMAP_DEFAULT((h), (s), (f))
+        #define CALL_DIRECT_MMAP(h, s, r, f)               DIRECT_MMAP_DEFAULT((h), (s), (r), (f))
     #endif /* DIRECT_MMAP */
     #ifdef DIRECT_MREMAP
-        #define CALL_DIRECT_MREMAP(h, a, os, ns, f, f2) DIRECT_MREMAP((h), (a), (os), (ns), (f), (f2))
+        #define CALL_DIRECT_MREMAP(h, a, os, ns, f, r, f2) DIRECT_MREMAP((h), (a), (os), (ns), (f), (r), (f2))
     #else /* DIRECT_MMAP */
-        #define CALL_DIRECT_MREMAP(h, a, os, ns, f, f2) DIRECT_MREMAP_DEFAULT((h), (a), (os), (ns), (f), (f2))
+        #define CALL_DIRECT_MREMAP(h, a, os, ns, f, r, f2) DIRECT_MREMAP_DEFAULT((h), (a), (os), (ns), (f), (r), (f2))
     #endif /* DIRECT_MMAP */
 #else  /* HAVE_MMAP */
-    #define USE_MMAP_BIT                            (SIZE_T_ZERO)
+    #define USE_MMAP_BIT                               (SIZE_T_ZERO)
 
-    #define MUNMAP(h, a, s)                         (-1)
-    #define MMAP(s, f)                              MFAIL
-    #define MREMAP(a, os, ns, f)                    MFAIL
-    #define DIRECT_MMAP(h, s, f)                    MFAIL
-    #define DIRECT_MREMAP(h, a, os, ns, f, f2)      MFAIL
+    #define MUNMAP(h, a, s)                            (-1)
+    #define MMAP(s, f)                                 MFAIL
+    #define MREMAP(a, os, ns, f)                       MFAIL
+    #define DIRECT_MMAP(h, s, f)                       MFAIL
+    #define DIRECT_MREMAP(h, a, os, ns, f, f2)         MFAIL
 
-    #define CALL_MUNMAP(h, a, s)                    MUNMAP((h), (a), (s))
-    #define CALL_MMAP(s, f)                         MMAP((s), (f))
-    #define CALL_MREMAP(a, os, ns, f)               MREMAP((a), (os), (ns), (f))
-    #define CALL_DIRECT_MMAP(h, s, f)               DIRECT_MMAP((h), (s), (f))
-    #define CALL_DIRECT_MREMAP(h, a, os, ns, f, f2) DIRECT_MREMAP((h), (a), (os), (ns), (f), (f2))
+    #define CALL_MUNMAP(h, a, s)                       MUNMAP((h), (a), (s))
+    #define CALL_MMAP(s, f)                            MMAP((s), (f))
+    #define CALL_MREMAP(a, os, ns, f)                  MREMAP((a), (os), (ns), (f))
+    #define CALL_DIRECT_MMAP(h, s, r, f)               DIRECT_MMAP((h), (s), (r), (f))
+    #define CALL_DIRECT_MREMAP(h, a, os, ns, f, r, f2) DIRECT_MREMAP((h), (a), (os), (ns), (f), (r), (f2))
 #endif /* HAVE_MMAP */
 
 /* mstate bit set if continguous morecore disabled or failed */
@@ -4061,14 +4053,14 @@ static void internal_malloc_stats(mstate m) {
 
 /* Relays to internal calls to malloc/free from realloc, memalign etc */
 #if ONLY_MSPACES
-static void* mspace_malloc_implementation(mstate ms, size_t bytes, unsigned flags);
-#define internal_malloc(m, b, f) mspace_malloc_implementation(m, b, f)
+static void* mspace_malloc_implementation(mstate ms, size_t bytes, size_t reserve, unsigned flags);
+#define internal_malloc(m, b, r, f) mspace_malloc_implementation((m), (b), (r), (f))
 #define internal_free(m, mem) mspace_free(m,mem);
 #else /* ONLY_MSPACES */
 #if MSPACES
-static void* mspace_malloc_implementation(mstate ms, size_t bytes, unsigned flags);
-#define internal_malloc(m, b, f)\
-   (m == gm)? dlmalloc(b) : mspace_malloc_implementation(m, b, f)
+static void* mspace_malloc_implementation(mstate ms, size_t bytes, size_t reserve, unsigned flags);
+#define internal_malloc(m, b, r, f)\
+   (m == gm)? dlmalloc(b) : mspace_malloc_implementation((m), (b), (r), (f))
 #define internal_free(m, mem)\
    if (m == gm) dlfree(mem); else mspace_free(m,mem);
 #else /* MSPACES */
@@ -4093,11 +4085,11 @@ static void* mspace_malloc_implementation(mstate ms, size_t bytes, unsigned flag
 */
 
 /* Malloc using mmap */
-static void* mmap_alloc(mstate m, size_t nb, unsigned flags) {
+static void* mmap_alloc(mstate m, size_t nb, size_t reserve, unsigned flags) {
   size_t mmsize = mmap_align(nb + SEVEN_SIZE_T_SIZES + CHUNK_ALIGN_MASK);
   if (mmsize > nb) {     /* Check for wrap around 0 */
     void* mmaph = 0;
-    char* mm = (char*)(CALL_DIRECT_MMAP(&mmaph, mmsize, flags));
+    char* mm = (char*)(CALL_DIRECT_MMAP(&mmaph, mmsize, reserve, flags));
     if (mm != CMFAIL) {
       size_t offset = MALLOC_ALIGNMENT + align_offset(chunk2mem(mm));
       size_t psize = mmsize - offset - MMAP_FOOT_PAD;
@@ -4122,7 +4114,7 @@ static void* mmap_alloc(mstate m, size_t nb, unsigned flags) {
 }
 
 /* Realloc using mmap */
-static mchunkptr mmap_resize(mstate m, mchunkptr oldp, size_t nb, unsigned flags) {
+static mchunkptr mmap_resize(mstate m, mchunkptr oldp, size_t nb, size_t reserve, unsigned flags) {
   size_t oldsize = chunksize(oldp);
   if (is_small(nb)) /* Can't shrink mmap regions below small size */
     return 0;
@@ -4136,7 +4128,7 @@ static mchunkptr mmap_resize(mstate m, mchunkptr oldp, size_t nb, unsigned flags
     size_t newmmsize = mmap_align(nb + SEVEN_SIZE_T_SIZES + CHUNK_ALIGN_MASK);
     char* mm = (char*)oldp - offset;
     void* mmaph = *(void**)mm;
-	char* cp = (char*)CALL_DIRECT_MREMAP(&mmaph, mm, oldmmsize, newmmsize, (flags & M2_PREVENT_MOVE) ? 0 : MREMAP_MAYMOVE, flags);
+    char* cp = (char*)CALL_DIRECT_MREMAP(&mmaph, mm, oldmmsize, newmmsize, (flags & M2_PREVENT_MOVE) ? 0 : MREMAP_MAYMOVE, reserve, flags);
     if (cp != CMFAIL) {
       mchunkptr newp = (mchunkptr)(cp + offset);
       size_t psize = newmmsize - offset - MMAP_FOOT_PAD;
@@ -4301,7 +4293,7 @@ static void add_segment(mstate m, char* tbase, size_t tsize, flag_t mmapped) {
 /* -------------------------- System allocation -------------------------- */
 
 /* Get memory from system using MORECORE or MMAP */
-static void* sys_alloc(mstate m, size_t nb, unsigned flags) {
+static void* sys_alloc(mstate m, size_t nb, size_t reserve, unsigned flags) {
   char* tbase = CMFAIL;
   size_t tsize = 0;
   flag_t mmap_flag = 0;
@@ -4310,7 +4302,7 @@ static void* sys_alloc(mstate m, size_t nb, unsigned flags) {
 
   /* Directly map large chunks, but only if already initialized */
   if (use_mmap(m) && (nb >= mparams.mmap_threshold || (flags & M2_ALWAYS_MMAP)) && m->topsize != 0) {
-    void* mem = mmap_alloc(m, nb, flags);
+    void* mem = mmap_alloc(m, nb, reserve, flags);
     if (mem != 0 || (flags & M2_ALWAYS_MMAP))
       return mem;
   }
@@ -4728,9 +4720,9 @@ static void* tmalloc_small(mstate m, size_t nb) {
 }
 
 /* --------------------------- realloc support --------------------------- */
-static void* internal_memalign(mstate m, size_t alignment, size_t bytes, unsigned flags);
+static void* internal_memalign(mstate m, size_t alignment, size_t bytes, size_t reserve, unsigned flags);
 
-static void* internal_realloc(mstate m, void* oldmem, size_t bytes, size_t alignment, unsigned flags) {
+static void* internal_realloc(mstate m, void* oldmem, size_t bytes, size_t alignment, size_t reserve, unsigned flags) {
   if (bytes >= MAX_REQUEST) {
     MALLOC_FAILURE_ACTION;
     return 0;
@@ -4748,7 +4740,7 @@ static void* internal_realloc(mstate m, void* oldmem, size_t bytes, size_t align
                 ok_next(oldp, next) && ok_pinuse(next))) {
       size_t nb = request2size(bytes);
       if (is_mmapped(oldp))
-        newp = mmap_resize(m, oldp, nb, flags);
+        newp = mmap_resize(m, oldp, nb, reserve, flags);
       else if (oldsize >= nb) { /* already big enough */
         size_t rsize = oldsize - nb;
         newp = oldp;
@@ -4792,8 +4784,8 @@ static void* internal_realloc(mstate m, void* oldmem, size_t bytes, size_t align
     }
     else if (!(flags & M2_PREVENT_MOVE)) {
       void* newmem = (alignment > MALLOC_ALIGNMENT) ?
-        internal_memalign(m, alignment, bytes, flags)
-        : internal_malloc(m, bytes, flags);
+        internal_memalign(m, alignment, bytes, reserve, flags)
+        : internal_malloc(m, bytes, reserve, flags);
       if (newmem != 0) {
         size_t oc = oldsize - overhead_for(oldp);
         memcpy(newmem, oldmem, (oc < bytes)? oc : bytes);
@@ -4807,9 +4799,9 @@ static void* internal_realloc(mstate m, void* oldmem, size_t bytes, size_t align
 
 /* --------------------------- memalign support -------------------------- */
 
-static void* internal_memalign(mstate m, size_t alignment, size_t bytes, unsigned flags) {
+static void* internal_memalign(mstate m, size_t alignment, size_t bytes, size_t reserve, unsigned flags) {
   if (alignment <= MALLOC_ALIGNMENT)    /* Can just use malloc */
-    return internal_malloc(m, bytes, flags);
+    return internal_malloc(m, bytes, reserve, flags);
   if (alignment <  MIN_CHUNK_SIZE) /* must be at least a minimum chunk size */
     alignment = MIN_CHUNK_SIZE;
   if ((alignment & (alignment-SIZE_T_ONE)) != 0) {/* Ensure a power of 2 */
@@ -4826,7 +4818,7 @@ static void* internal_memalign(mstate m, size_t alignment, size_t bytes, unsigne
   else {
     size_t nb = request2size(bytes);
     size_t req = nb + alignment + MIN_CHUNK_SIZE - CHUNK_OVERHEAD;
-    char* mem = (char*)internal_malloc(m, req, flags);
+    char* mem = (char*)internal_malloc(m, req, reserve, flags);
     if (mem != 0) {
       void* leader = 0;
       void* trailer = 0;
@@ -4931,7 +4923,7 @@ static void** ialloc(mstate m,
   else {
     /* if empty req, must still return chunk representing empty array */
     if (n_elements == 0)
-      return (void**)internal_malloc(m, 0, 0);
+      return (void**)internal_malloc(m, 0, 0, 0);
     marray = 0;
     array_size = request2size(n_elements * (sizeof(void*)));
   }
@@ -4957,7 +4949,7 @@ static void** ialloc(mstate m,
   */
   was_enabled = use_mmap(m);
   disable_mmap(m);
-  mem = internal_malloc(m, size - CHUNK_OVERHEAD, 0);
+  mem = internal_malloc(m, size - CHUNK_OVERHEAD, 0, 0);
   if (was_enabled)
     enable_mmap(m);
   if (mem == 0)
@@ -5483,7 +5475,7 @@ size_t destroy_mspace(mspace msp) {
   versions. This is not so nice but better than the alternatives.
 */
 
-static FORCEINLINE void* mspace_malloc_implementation(mstate ms, size_t bytes, unsigned flags) {
+static FORCEINLINE void* mspace_malloc_implementation(mstate ms, size_t bytes, size_t reserve, unsigned flags) {
   if (!PREACTION(ms)) {
     void* mem;
     size_t nb = bytes;
@@ -5584,7 +5576,7 @@ static FORCEINLINE void* mspace_malloc_implementation(mstate ms, size_t bytes, u
       }
     }
 
-    mem = sys_alloc(ms, nb, flags);
+    mem = sys_alloc(ms, nb, reserve, flags);
 
   postaction:
     POSTACTION(ms);
@@ -5599,9 +5591,9 @@ void* mspace_malloc(mspace msp, size_t bytes) {
     USAGE_ERROR_ACTION(ms,ms);
     return 0;
   }
-  return mspace_malloc_implementation(ms, bytes, 0);
+  return mspace_malloc_implementation(ms, bytes, 0, 0);
 }
-void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, unsigned flags) {
+void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, size_t reserve, unsigned flags) {
   void* mem;
   mstate ms = (mstate)msp;
   if (!ok_magic(ms)) {
@@ -5609,9 +5601,9 @@ void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, unsigned flags)
     return 0;
   }
   if (alignment <= MALLOC_ALIGNMENT)
-    mem = mspace_malloc_implementation(ms, bytes, flags);
+    mem = mspace_malloc_implementation(ms, bytes, reserve, flags);
   else
-    mem = internal_memalign(ms, alignment, bytes, flags);
+    mem = internal_memalign(ms, alignment, bytes, reserve, flags);
   if (mem && (flags & M2_ZERO_MEMORY)) {
     mchunkptr p = mem2chunk(mem);
     if (calloc_must_clear(p))
@@ -5621,6 +5613,9 @@ void* mspace_malloc2(mspace msp, size_t bytes, size_t alignment, unsigned flags)
 }
 
 void mspace_free(mspace msp, void* mem) {
+  mspace_free2(msp, mem, 0);
+}
+void mspace_free2(mspace msp, void* mem, unsigned flags) {
   if (mem != 0) {
     mchunkptr p = mem2chunk(mem);
 #if FOOTERS
@@ -5708,7 +5703,7 @@ void mspace_free(mspace msp, void* mem) {
             tchunkptr tp = (tchunkptr)p;
             insert_large_chunk(fm, tp, psize);
             check_free_chunk(fm, p);
-            if (--fm->release_checks == 0)
+            if (!(flags & M2_CONSTANT_TIME) && --fm->release_checks == 0)
               release_unused_segments(fm);
           }
           goto postaction;
@@ -5736,7 +5731,7 @@ void* mspace_calloc(mspace msp, size_t n_elements, size_t elem_size) {
         (req / n_elements != elem_size))
       req = MAX_SIZE_T; /* force downstream failure on overflow */
   }
-  mem = internal_malloc(ms, req, 0);
+  mem = internal_malloc(ms, req, 0, 0);
   if (mem != 0) {
     mchunkptr p = mem2chunk(mem);
     if (calloc_must_clear(p))
@@ -5745,9 +5740,9 @@ void* mspace_calloc(mspace msp, size_t n_elements, size_t elem_size) {
   return mem;
 }
 
-void* mspace_realloc2(mspace msp, void* oldmem, size_t bytes, size_t alignment, unsigned flags) {
+void* mspace_realloc2(mspace msp, void* oldmem, size_t bytes, size_t alignment, size_t reserve, unsigned flags) {
   if (oldmem == 0)
-    return mspace_malloc2(msp, bytes, alignment, flags);
+    return mspace_malloc2(msp, bytes, alignment, reserve, flags);
 #ifdef REALLOC_ZERO_BYTES_FREES
   if (bytes == 0) {
     mspace_free(msp, oldmem);
@@ -5767,7 +5762,7 @@ void* mspace_realloc2(mspace msp, void* oldmem, size_t bytes, size_t alignment, 
       USAGE_ERROR_ACTION(ms,ms);
       return 0;
     }
-    mem = internal_realloc(ms, oldmem, bytes, alignment, flags);
+    mem = internal_realloc(ms, oldmem, bytes, alignment, reserve, flags);
     if (mem && (flags & M2_ZERO_MEMORY) && bytes > oldsize) {
       p = mem2chunk(mem);
       if (calloc_must_clear(p)) {
@@ -5779,7 +5774,7 @@ void* mspace_realloc2(mspace msp, void* oldmem, size_t bytes, size_t alignment, 
   }
 }
 void* mspace_realloc(mspace msp, void* oldmem, size_t bytes) {
-  return mspace_realloc2(msp, oldmem, bytes, 0, 0);
+  return mspace_realloc2(msp, oldmem, bytes, 0, 0, 0);
 }
 
 void* mspace_memalign(mspace msp, size_t alignment, size_t bytes) {
@@ -5788,7 +5783,7 @@ void* mspace_memalign(mspace msp, size_t alignment, size_t bytes) {
     USAGE_ERROR_ACTION(ms,ms);
     return 0;
   }
-  return internal_memalign(ms, alignment, bytes, 0);
+  return internal_memalign(ms, alignment, bytes, 0, 0);
 }
 
 void** mspace_independent_calloc(mspace msp, size_t n_elements,

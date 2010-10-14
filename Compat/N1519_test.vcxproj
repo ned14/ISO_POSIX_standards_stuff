@@ -14,7 +14,7 @@
     <ClCompile Include="..\n1519lib_test.c" />
   </ItemGroup>
   <ItemGroup>
-    <Library Include="Debug\N1519_compat.lib" />
+    <Library Include="Release\N1519_compat.lib" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{03C6506F-0B2E-400E-A9B6-D8F98E78320B}</ProjectGuid>
@@ -71,6 +71,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

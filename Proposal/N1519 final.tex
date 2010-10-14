@@ -696,7 +696,7 @@ All source code related to this proposal, including the LaTeX files used to gene
 \end{center}
 The above GIT repository contains:
 \begin{enumerate}
-\item A ``compatibility" library for Microsoft Windows and POSIX which implements the proposed API using the C99 malloc API and OpenMP, though always returning failure for non-relocating object resizes for obvious reasons. This can perform quite well if your local memory allocator is capable of parallel execution.
+\item A ``compatibility" library for Microsoft Windows and POSIX which implements the proposed API using the C99 malloc API, platform-specific APIs and OpenMP, though address space reservation isn't implemented (though you can use this library as if it were implemented). This can perform quite well if your local memory allocator is capable of parallel execution.
 \item A modified copy of dlmalloc \bref{dlmalloc} which is a fully featured implementation of the proposed API. dlmalloc is a well known memory allocator with support for the Microsoft Windows ``Win32" API and the standard POSIX API as implemented by Unix derived operating systems such as Linux, BSD and Apple Mac OS X among others.
 \end{enumerate}
 The following notes and cost estimates resulted from the above work:
