@@ -367,7 +367,7 @@ void **batch_alloc1(int *errnos, void **ptrs, size_t *restrict count,
     /* Note that some implementations use malloc for variable length
        arrays: this may induce recursion. */
     struct mallocation5 mdata[maxn], *mdataptrs[maxn];
-    if(!ptrs && !(ptrs=calloc(maxn, sizeof(void *))))
+    if(!ptrs && !(ptrs=(void **) calloc(maxn, sizeof(void *))))
     {
         *count=0;
         return NULL;
