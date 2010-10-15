@@ -1,5 +1,5 @@
-/* n1519lib_compat.c
-A C99 compatible implementation of the N1519 proposal for the C programming language
+/* n1527lib_compat.c
+A C99 compatible implementation of the N1527 proposal for the C programming language
 (C) 2010 Niall Douglas http://www.nedproductions.biz/
 
 
@@ -28,7 +28,7 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#include "../n1519lib.h"
+#include "../n1527lib.h"
 #include <string.h>
 #include <errno.h>
 #ifdef _OPENMP
@@ -36,7 +36,7 @@ DEALINGS IN THE SOFTWARE.
 #endif
 #include <malloc.h>
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_alloc(size_t alignment, size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_alloc(size_t alignment, size_t size)
 {
 #ifdef _MSC_VER
   return _aligned_malloc(size, alignment);
@@ -45,7 +45,7 @@ N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_alloc(size_t align
 #endif
 }
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_realloc(void *ptr, size_t alignment, size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_realloc(void *ptr, size_t alignment, size_t size)
 {
 #ifdef _MSC_VER
   return _aligned_realloc(ptr, size, alignment);
@@ -60,11 +60,11 @@ N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_realloc(void *ptr,
 #endif
 }
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **n1519_batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **n1527_batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags)
 {
   int n;
   size_t maxn=*count, _count=0;
-  if(!ptrs && !(ptrs=(void **) n1519_calloc(maxn, sizeof(void *))))
+  if(!ptrs && !(ptrs=(void **) n1527_calloc(maxn, sizeof(void *))))
   {
     *count=0;
     return NULL;
@@ -78,7 +78,7 @@ N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **n1519_batch_alloc1(int *errnos,
     {
       if(ptrs[n])
       {
-        n1519_free(ptrs[n]);
+        n1527_free(ptrs[n]);
         ptrs[n]=0;
       }
       _count++;
@@ -88,9 +88,9 @@ N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **n1519_batch_alloc1(int *errnos,
   {
     size_t _size;
     {
-      void *temp=alignment ? n1519_aligned_alloc(alignment, *size) : n1519_malloc(*size);
-      *size=_size=n1519_malloc_usable_size(temp);
-      n1519_free(temp);
+      void *temp=alignment ? n1527_aligned_alloc(alignment, *size) : n1527_malloc(*size);
+      *size=_size=n1527_malloc_usable_size(temp);
+      n1527_free(temp);
     }
 #ifdef _OPENMP
 #pragma omp parallel for reduction(+:_count) schedule(guided)
@@ -98,15 +98,15 @@ N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **n1519_batch_alloc1(int *errnos,
     for(n=0; n<(int) maxn; n++)
     {
       void *temp=0;
-      size_t oldsize=(ptrs[n] && (flags & M2_ZERO_MEMORY)) ? n1519_malloc_usable_size(ptrs[n]) : 0;
+      size_t oldsize=(ptrs[n] && (flags & M2_ZERO_MEMORY)) ? n1527_malloc_usable_size(ptrs[n]) : 0;
       if(ptrs[n]) /* resize */
       {
         if(!(flags & M2_PREVENT_MOVE))
-          temp=alignment ? n1519_aligned_realloc(ptrs[n], alignment, _size) : n1519_realloc(ptrs[n], _size);
+          temp=alignment ? n1527_aligned_realloc(ptrs[n], alignment, _size) : n1527_realloc(ptrs[n], _size);
       }
       else /* allocate */
       {
-        temp=alignment ? n1519_aligned_alloc(alignment, _size) : n1519_malloc(_size);
+        temp=alignment ? n1527_aligned_alloc(alignment, _size) : n1527_malloc(_size);
       }
       if(temp) /* success */
       {
@@ -126,7 +126,7 @@ N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **n1519_batch_alloc1(int *errnos,
   return ptrs;
 }
 
-_Bool n1519_batch_alloc2(int *errnos, struct n1519_mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags)
+_Bool n1527_batch_alloc2(int *errnos, struct n1527_mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags)
 {
   int n;
   size_t maxn=*count, _count=0;
@@ -139,7 +139,7 @@ _Bool n1519_batch_alloc2(int *errnos, struct n1519_mallocation2 **RESTRICT mdata
     {
       if(mdataptrs[n] && mdataptrs[n]->ptr)
       {
-        n1519_free(mdataptrs[n]->ptr);
+        n1527_free(mdataptrs[n]->ptr);
         mdataptrs[n]->ptr=0;
       }
       _count++;
@@ -147,20 +147,20 @@ _Bool n1519_batch_alloc2(int *errnos, struct n1519_mallocation2 **RESTRICT mdata
     else
     {
       void *temp=0;
-      size_t oldsize=(mdataptrs[n]->ptr && (flags & M2_ZERO_MEMORY)) ? n1519_malloc_usable_size(mdataptrs[n]->ptr) : 0;
+      size_t oldsize=(mdataptrs[n]->ptr && (flags & M2_ZERO_MEMORY)) ? n1527_malloc_usable_size(mdataptrs[n]->ptr) : 0;
       if(mdataptrs[n]->ptr) /* resize */
       {
         if(!(flags & M2_PREVENT_MOVE))
-          temp=alignment ? n1519_aligned_realloc(mdataptrs[n]->ptr, alignment, mdataptrs[n]->size) : n1519_realloc(mdataptrs[n]->ptr, mdataptrs[n]->size);
+          temp=alignment ? n1527_aligned_realloc(mdataptrs[n]->ptr, alignment, mdataptrs[n]->size) : n1527_realloc(mdataptrs[n]->ptr, mdataptrs[n]->size);
       }
       else /* allocate */
       {
-        temp=alignment ? n1519_aligned_alloc(alignment, mdataptrs[n]->size) : n1519_malloc(mdataptrs[n]->size);
+        temp=alignment ? n1527_aligned_alloc(alignment, mdataptrs[n]->size) : n1527_malloc(mdataptrs[n]->size);
       }
       if(temp) /* success */
       {
         mdataptrs[n]->ptr=temp;
-        mdataptrs[n]->size=n1519_malloc_usable_size(temp);
+        mdataptrs[n]->size=n1527_malloc_usable_size(temp);
         if(errnos) errnos[n]=0;
         if((flags & M2_ZERO_MEMORY) && mdataptrs[n]->size>oldsize)
           memset((void *)((char *) mdataptrs[n]->ptr + oldsize), 0, mdataptrs[n]->size-oldsize);
@@ -176,7 +176,7 @@ _Bool n1519_batch_alloc2(int *errnos, struct n1519_mallocation2 **RESTRICT mdata
   return _count==maxn;
 }
 
-_Bool n1519_batch_alloc5(int *errnos, struct n1519_mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count)
+_Bool n1527_batch_alloc5(int *errnos, struct n1527_mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count)
 {
   int n;
   size_t maxn=*count, _count=0;
@@ -189,7 +189,7 @@ _Bool n1519_batch_alloc5(int *errnos, struct n1519_mallocation5 **RESTRICT mdata
     {
       if(mdataptrs[n] && mdataptrs[n]->ptr)
       {
-        n1519_free(mdataptrs[n]->ptr);
+        n1527_free(mdataptrs[n]->ptr);
         mdataptrs[n]->ptr=0;
       }
       _count++;
@@ -197,20 +197,20 @@ _Bool n1519_batch_alloc5(int *errnos, struct n1519_mallocation5 **RESTRICT mdata
     else
     {
       void *temp=0;
-      size_t oldsize=(mdataptrs[n]->ptr && (mdataptrs[n]->flags & M2_ZERO_MEMORY)) ? n1519_malloc_usable_size(mdataptrs[n]->ptr) : 0;
+      size_t oldsize=(mdataptrs[n]->ptr && (mdataptrs[n]->flags & M2_ZERO_MEMORY)) ? n1527_malloc_usable_size(mdataptrs[n]->ptr) : 0;
       if(mdataptrs[n]->ptr) /* resize */
       {
         if(!(mdataptrs[n]->flags & M2_PREVENT_MOVE))
-          temp=mdataptrs[n]->alignment ? n1519_aligned_realloc(mdataptrs[n]->ptr, mdataptrs[n]->alignment, mdataptrs[n]->size) : n1519_realloc(mdataptrs[n]->ptr, mdataptrs[n]->size);
+          temp=mdataptrs[n]->alignment ? n1527_aligned_realloc(mdataptrs[n]->ptr, mdataptrs[n]->alignment, mdataptrs[n]->size) : n1527_realloc(mdataptrs[n]->ptr, mdataptrs[n]->size);
       }
       else /* allocate */
       {
-        temp=mdataptrs[n]->alignment ? n1519_aligned_alloc(mdataptrs[n]->alignment, mdataptrs[n]->size) : n1519_malloc(mdataptrs[n]->size);
+        temp=mdataptrs[n]->alignment ? n1527_aligned_alloc(mdataptrs[n]->alignment, mdataptrs[n]->size) : n1527_malloc(mdataptrs[n]->size);
       }
       if(temp) /* success */
       {
         mdataptrs[n]->ptr=temp;
-        mdataptrs[n]->size=n1519_malloc_usable_size(temp);
+        mdataptrs[n]->size=n1527_malloc_usable_size(temp);
         if(errnos) errnos[n]=0;
         if((mdataptrs[n]->flags & M2_ZERO_MEMORY) && mdataptrs[n]->size>oldsize)
           memset((void *)((char *) mdataptrs[n]->ptr + oldsize), 0, mdataptrs[n]->size-oldsize);
@@ -226,12 +226,12 @@ _Bool n1519_batch_alloc5(int *errnos, struct n1519_mallocation5 **RESTRICT mdata
   return _count==maxn;
 }
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_calloc(size_t nmemb, size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_calloc(size_t nmemb, size_t size)
 {
   return calloc(nmemb, size);
 }
 
-void n1519_free(void *ptr)
+void n1527_free(void *ptr)
 {
 #ifdef _MSC_VER
   errno=0;
@@ -243,12 +243,12 @@ void n1519_free(void *ptr)
 #endif
 }
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_malloc(size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_malloc(size_t size)
 {
   return malloc(size);
 }
 
-size_t n1519_malloc_usable_size(void *ptr)
+size_t n1527_malloc_usable_size(void *ptr)
 {
 #ifdef _MSC_VER
   return _msize(ptr);
@@ -259,12 +259,12 @@ size_t n1519_malloc_usable_size(void *ptr)
 #endif
 }
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_realloc(void *ptr, size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_realloc(void *ptr, size_t size)
 {
   return realloc(ptr, size);
 }
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_try_aligned_realloc(void *ptr, size_t alignment, size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_aligned_realloc(void *ptr, size_t alignment, size_t size)
 {
 #ifdef _MSC_VER
   return _expand(ptr, size);
@@ -274,7 +274,7 @@ N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_try_aligned_realloc(void *
 #endif
 }
 
-N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_try_realloc(void *ptr, size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_realloc(void *ptr, size_t size)
 {
 #ifdef _MSC_VER
   return _expand(ptr, size);

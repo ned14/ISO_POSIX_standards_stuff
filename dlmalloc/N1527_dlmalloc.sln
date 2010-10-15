@@ -1,12 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "N1519_dlmalloc", "N1519_dlmalloc.vcxproj", "{01D80938-9908-4008-9B5E-5D03EF12CF2B}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "N1527_dlmalloc", "N1527_dlmalloc.vcxproj", "{01D80938-9908-4008-9B5E-5D03EF12CF2B}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "N1519_test", "N1519_test.vcxproj", "{6BFB556E-6926-4247-AB99-3954B36A556C}"
-	ProjectSection(ProjectDependencies) = postProject
-		{01D80938-9908-4008-9B5E-5D03EF12CF2B} = {01D80938-9908-4008-9B5E-5D03EF12CF2B}
-	EndProjectSection
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "N1527_test", "N1527_test.vcxproj", "{6BFB556E-6926-4247-AB99-3954B36A556C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

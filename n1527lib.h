@@ -1,5 +1,5 @@
-/* n1519lib.h
-Declares and defines the N1519 proposal for the C programming language
+/* n1527lib.h
+Declares and defines the N1527 proposal for the C programming language
 (C) 2010 Niall Douglas http://www.nedproductions.biz/
 
 
@@ -28,13 +28,13 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#ifndef N1519LIB_INCLUDED
-#define N1519LIB_INCLUDED
+#ifndef N1527LIB_INCLUDED
+#define N1527LIB_INCLUDED
 #include <stdint.h>
 #include <stdlib.h>
 
-/*! \file n1519lib.h
-\brief Declares and defines the N1519 proposal for the C programming language
+/*! \file n1527lib.h
+\brief Declares and defines the N1527 proposal for the C programming language
 */
 
 #if __STDC_VERSION__ < 199901L		/* not C99 or better */
@@ -49,44 +49,44 @@ typedef unsigned char _Bool;
 #endif
 #endif
 
-/*! \def N1519MALLOCEXTSPEC
+/*! \def N1527MALLOCEXTSPEC
 \brief Defines how this API is to be made visible.
 
-N1519MALLOCEXTSPEC can be defined to be __declspec(dllexport) or
+N1527MALLOCEXTSPEC can be defined to be __declspec(dllexport) or
 __attribute__ ((visibility("default"))) or whatever you like. It defaults
-to extern unless N1519MALLOC_DLL_EXPORTS is set as it would be when building
+to extern unless N1527MALLOC_DLL_EXPORTS is set as it would be when building
 the DLL.
  */
-#ifndef N1519MALLOCEXTSPEC
- #ifdef N1519MALLOC_DLL_EXPORTS
+#ifndef N1527MALLOCEXTSPEC
+ #ifdef N1527MALLOC_DLL_EXPORTS
   #ifdef WIN32
-   #define N1519MALLOCEXTSPEC extern __declspec(dllexport)
+   #define N1527MALLOCEXTSPEC extern __declspec(dllexport)
   #elif defined(__GNUC__)
-   #define N1519MALLOCEXTSPEC extern __attribute__ ((visibility("default")))
+   #define N1527MALLOCEXTSPEC extern __attribute__ ((visibility("default")))
   #endif
  #else
  #endif
 #endif
-#ifndef N1519MALLOCEXTSPEC
-#define N1519MALLOCEXTSPEC extern
+#ifndef N1527MALLOCEXTSPEC
+#define N1527MALLOCEXTSPEC extern
 #endif
 
 #if defined(_MSC_VER) && _MSC_VER>=1400
- #define N1519MALLOCPTRATTR __declspec(restrict)
- #define N1519MALLOCNOALIASATTR __declspec(noalias)
+ #define N1527MALLOCPTRATTR __declspec(restrict)
+ #define N1527MALLOCNOALIASATTR __declspec(noalias)
 #endif
 #ifdef __GNUC__
- #define N1519MALLOCPTRATTR __attribute__ ((malloc))
+ #define N1527MALLOCPTRATTR __attribute__ ((malloc))
 #endif
-/*! \def N1519MALLOCPTRATTR
-\brief Defined to the specifier for a pointer which points to a memory block. Like N1519MALLOCNOALIASATTR, but sadly not identical. */
-#ifndef N1519MALLOCPTRATTR
- #define N1519MALLOCPTRATTR
+/*! \def N1527MALLOCPTRATTR
+\brief Defined to the specifier for a pointer which points to a memory block. Like N1527MALLOCNOALIASATTR, but sadly not identical. */
+#ifndef N1527MALLOCPTRATTR
+ #define N1527MALLOCPTRATTR
 #endif
-/*! \def N1519MALLOCNOALIASATTR
+/*! \def N1527MALLOCNOALIASATTR
 \brief Defined to the specifier for a pointer which does not alias any other variable. */
-#ifndef N1519MALLOCNOALIASATTR
- #define N1519MALLOCNOALIASATTR
+#ifndef N1527MALLOCNOALIASATTR
+ #define N1527MALLOCNOALIASATTR
 #endif
 
 
@@ -120,7 +120,7 @@ extern "C" {
 #ifndef MALLOCATION2_DEFINED
 #define MALLOCATION2_DEFINED
 /*! \brief The structure used by the batch_alloc2() function */
-struct n1519_mallocation2 {
+struct n1527_mallocation2 {
   void *ptr;
   size_t size;
 };
@@ -129,7 +129,7 @@ struct n1519_mallocation2 {
 #ifndef MALLOCATION5_DEFINED
 #define MALLOCATION5_DEFINED
 /*! \brief The structure used by the batch_alloc5() function */
-struct n1519_mallocation5 {
+struct n1527_mallocation5 {
   void *ptr;
   size_t size;
   size_t alignment;
@@ -139,33 +139,33 @@ struct n1519_mallocation5 {
 #endif
 
 /*! \brief Allocates aligned memory */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_alloc(size_t alignment, size_t size);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_alloc(size_t alignment, size_t size);
 /*! \brief Resizes aligned memory */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_aligned_realloc(void *ptr, size_t alignment, size_t size);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_realloc(void *ptr, size_t alignment, size_t size);
 /*! \brief Performs a sequence of same-sized allocation, resizes and deallocations */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void **n1519_batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **n1527_batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags);
 /*! \brief Performs a sequences of allocations, resizes and deallocations */
-N1519MALLOCEXTSPEC _Bool n1519_batch_alloc2(int *errnos, struct n1519_mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags);
+N1527MALLOCEXTSPEC _Bool n1527_batch_alloc2(int *errnos, struct n1527_mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags);
 /*! \brief Performs a sequences of allocations, resizes and deallocations */
-N1519MALLOCEXTSPEC _Bool n1519_batch_alloc5(int *errnos, struct n1519_mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count);
+N1527MALLOCEXTSPEC _Bool n1527_batch_alloc5(int *errnos, struct n1527_mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count);
 /*! \brief Allocates zeroed memory */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_calloc(size_t nmemb, size_t size);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_calloc(size_t nmemb, size_t size);
 /*! \brief Frees both aligned and non-aligned blocks */
-N1519MALLOCEXTSPEC void n1519_free(void *ptr);
+N1527MALLOCEXTSPEC void n1527_free(void *ptr);
 /*! \brief Allocates zeroed memory */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_malloc(size_t size);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_malloc(size_t size);
 /*! \brief Returns the size of an existing block */
-N1519MALLOCEXTSPEC size_t n1519_malloc_usable_size(void *ptr);
+N1527MALLOCEXTSPEC size_t n1527_malloc_usable_size(void *ptr);
 /*! \brief Allocates zeroed memory */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_realloc(void *ptr, size_t size);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_realloc(void *ptr, size_t size);
 /*! \brief A non-relocating aligned resize */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_try_aligned_realloc(void *ptr, size_t alignment, size_t size);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_aligned_realloc(void *ptr, size_t alignment, size_t size);
 /*! \brief A non-relocating resize */
-N1519MALLOCEXTSPEC N1519MALLOCNOALIASATTR N1519MALLOCPTRATTR void *n1519_try_realloc(void *ptr, size_t size);
+N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_realloc(void *ptr, size_t size);
 
 
 #if defined(__cplusplus)
 }
 #endif
 
-#endif /* N1519LIB_INCLUDED */
+#endif /* N1527LIB_INCLUDED */

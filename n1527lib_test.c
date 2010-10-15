@@ -1,5 +1,5 @@
-/* n1519lib_test.c
-Tests the N1519 proposal for the C programming language implementations
+/* n1527lib_test.c
+Tests the N1527 proposal for the C programming language implementations
 (C) 2010 Niall Douglas http://www.nedproductions.biz/
 
 
@@ -28,9 +28,9 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#define RECORDS 400000
+#define RECORDS 4000000
 
-#include "n1519lib.h"
+#include "n1527lib.h"
 #include <stdio.h>
 
 #ifdef WIN32
@@ -73,19 +73,32 @@ static usCount GetUsCount()
 
 static size_t sizes[RECORDS];
 static void *ptrs[RECORDS];
-static struct n1519_mallocation2 mdata[RECORDS], *mdataptrs[RECORDS];
+static struct n1527_mallocation2 mdata[RECORDS], *mdataptrs[RECORDS];
 
 int main(void)
 {
   size_t n, m;
   usCount start, end;
-  printf("N1519lib test program\n"
+  printf("N1527lib test program\n"
          "-=-=-=-=-=-=-=-=-=-=-\n");
   srand(1);
   for(n=0; n<RECORDS; n++)
-    sizes[n]=rand() & 32767;
+    sizes[n]=rand() & 1023;
+  {
+    unsigned frees=0;
+    printf("Fragmenting free space ...\n");
+    start=GetUsCount();
+    while(GetUsCount()-start<3000000000000)
+    {
+      n=rand() % RECORDS;
+      if(ptrs[n]) { n1527_free(ptrs[n]); ptrs[n]=0; frees++; }
+      else ptrs[n]=n1527_malloc(sizes[n]);
+    }
+    memset(ptrs, 0, RECORDS*sizeof(void *));
+    printf("Did %u frees\n", frees);
+  }
 
-  if(0)
+  if(1)
   {
     printf("\nBatch single sized test\n"
              "-----------------------\n");
@@ -95,7 +108,7 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        ptrs[n]=n1519_malloc(32768);
+        ptrs[n]=n1527_malloc(1024);
       }
       end=GetUsCount();
       printf("malloc() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
@@ -103,7 +116,7 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        n1519_free(ptrs[n]);
+        n1527_free(ptrs[n]);
         ptrs[n]=0;
       }
       end=GetUsCount();
@@ -111,17 +124,30 @@ int main(void)
     }
 
     {
-      size_t count=RECORDS, size=32768;
+      size_t count=RECORDS, size=1024;
       start=GetUsCount();
-      n1519_batch_alloc1(NULL, ptrs, &count, &size, 0, 0, 0);
+      n1527_batch_alloc1(NULL, ptrs, &count, &size, 0, 0, M2_BATCH_IS_ALL_ALLOC);
+      end=GetUsCount();
+      printf("batch_alloc1(M2_BATCH_IS_ALL_ALLOC) does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
+
+      count=RECORDS;
+      start=GetUsCount();
+      n1527_batch_alloc1(NULL, ptrs, &count, NULL, 0, 0, 0);
+      end=GetUsCount();
+      printf("batch_alloc1() does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
+    }
+    {
+      size_t count=RECORDS, size=1024;
+      start=GetUsCount();
+      n1527_batch_alloc1(NULL, ptrs, &count, &size, 0, 0, 0);
       end=GetUsCount();
       printf("batch_alloc1() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
 
       count=RECORDS;
       start=GetUsCount();
-      n1519_batch_alloc1(NULL, ptrs, &count, NULL, 0, 0, 0);
+      n1527_batch_alloc1(NULL, ptrs, &count, NULL, 0, 0, M2_BATCH_IS_ALL_FREE|M2_CONSTANT_TIME);
       end=GetUsCount();
-      printf("batch_alloc1() does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
+      printf("batch_alloc1(M2_CONSTANT_TIME) does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
     }
   }
   if(1)
@@ -133,7 +159,8 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        ptrs[n]=n1519_malloc(sizes[n]);
+        if(!(ptrs[n]=n1527_malloc(sizes[n]))) abort();
+        /*if(!((n+1) & 65535)) printf("%u\n", n);*/
       }
       end=GetUsCount();
       printf("malloc() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
@@ -141,8 +168,9 @@ int main(void)
       start=GetUsCount();
       for(n=0; n<RECORDS; n++)
       {
-        n1519_free(ptrs[n]);
+        n1527_free(ptrs[n]);
         ptrs[n]=0;
+        /*if(!((n+1) & 131071)) printf(".");*/
       }
       end=GetUsCount();
       printf("free() does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
@@ -157,7 +185,29 @@ int main(void)
         mdata[n].size=sizes[n];
       }
       start=GetUsCount();
-      n1519_batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
+      n1527_batch_alloc2(NULL, mdataptrs, &count, 0, 0, M2_BATCH_IS_ALL_ALLOC);
+      end=GetUsCount();
+      printf("batch_alloc2(M2_BATCH_IS_ALL_ALLOC) does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
+
+      count=RECORDS;
+      for(n=0; n<RECORDS; n++)
+        mdata[n].size=0;
+      start=GetUsCount();
+      n1527_batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
+      end=GetUsCount();
+      printf("batch_alloc2() does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
+    }
+
+    {
+      size_t count=RECORDS;
+      for(n=0; n<RECORDS; n++)
+      {
+        mdataptrs[n]=mdata+n;
+        mdata[n].ptr=0;
+        mdata[n].size=sizes[n];
+      }
+      start=GetUsCount();
+      n1527_batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
       end=GetUsCount();
       printf("batch_alloc2() does %f mallocs/sec\n\n", RECORDS/((end-start)/1000000000000.0));
 
@@ -165,9 +215,9 @@ int main(void)
       for(n=0; n<RECORDS; n++)
         mdata[n].size=0;
       start=GetUsCount();
-      n1519_batch_alloc2(NULL, mdataptrs, &count, 0, 0, 0);
+      n1527_batch_alloc2(NULL, mdataptrs, &count, 0, 0, M2_BATCH_IS_ALL_FREE|M2_CONSTANT_TIME);
       end=GetUsCount();
-      printf("batch_alloc2() does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
+      printf("batch_alloc2(M2_CONSTANT_TIME) does %f frees/sec\n\n", RECORDS/((end-start)/1000000000000.0));
     }
   }
 #ifdef _MSC_VER
