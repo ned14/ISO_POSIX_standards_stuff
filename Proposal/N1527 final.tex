@@ -9,21 +9,21 @@
 \let\ifpdf\undefined
 \pdfoutput=1
 \usepackage[plainpages=false, pdfpagelabels, bookmarksnumbered, hyperindex=true, pdfborder={0 0 0}]{hyperref}
-\hypersetup{pdftitle={N1519: Latency Reducing Memory Allocation in the C standard library}, pdfauthor={Niall Douglas}, pdfsubject={ISO/IEC JTC1/SC22/WG14}, pdfkeywords={C1X, N1519}}
+\hypersetup{pdftitle={N1527: Latency Reducing Memory Allocation in the C standard library}, pdfauthor={Niall Douglas}, pdfsubject={ISO/IEC JTC1/SC22/WG14}, pdfkeywords={C1X, N1527}}
 
 \newcommand{\superscript}[1]{\ensuremath{^{\textrm{#1}}}}
 \newcommand{\subscript}[1]{\ensuremath{_{\textrm{#1}}}}
 \definecolor{changed}{rgb}{0,0.33,0}
 
-\standard{ISO SC22/WG14 -- N1519: Latency Reducing Memory Allocation}
-\yearofedition{\hfill [v1.92 Oct 2010]}
+\standard{ISO SC22/WG14 -- N1527: Latency Reducing Memory Allocation}
+\yearofedition{\hfill [v1.93 Oct 2010]}
 
 \begin{document}
 
-\title{N1519: Latency Reducing Memory Allocation in the C standard library}{\linebreak \large{A minimal change in the dynamic memory allocation API in order to reduce system memory bandwidth usage}}{}
+\title{N1527: Latency Reducing Memory Allocation in the C standard library}{\linebreak \large{A minimal change in the dynamic memory allocation API in order to reduce system memory bandwidth usage}}{}
 \maxtocdepth{sssclause}
 
-v1.92 14th October 2010
+v1.93 15th October 2010
 
 Niall Douglas MBS MA BSc \hfill ned Productions IT Consulting Limited \linebreak
 Cork, Ireland \hfill {\url{http://www.nedproductions.biz/}
@@ -31,6 +31,7 @@ Cork, Ireland \hfill {\url{http://www.nedproductions.biz/}
 \small{\begin{itemize}
 \item \textbf{Changelog:}
 \tiny{\begin{itemize}
+\item v1.93 final (15th Oct 2010): Changed from N1519 to N1527.
 \item v1.92 final (14th Oct 2010): Fixed up various typos. Specced the scenario when \texttt{struct mallocation *} is NULL.
 \item v1.91 draft 1 (11th Oct 2010): Pre-release to those who have partaken in consultation process so far.
 \item v1.00 (8th Sept 2010): First release onto \url{http://mallocv2.wordpress.com/}.
@@ -692,11 +693,11 @@ void *try_realloc(void *ptr, size_t size)
 \clause{Implementation notes}
 All source code related to this proposal, including the LaTeX files used to generate this proposal document, can be found at:
 \begin{center}
-\url{git://github.com/ned14/C1X_N1519.git}
+\url{git://github.com/ned14/C1X_N1527.git}
 \end{center}
 The above GIT repository contains:
 \begin{enumerate}
-\item A ``compatibility" library for Microsoft Windows and POSIX which implements the proposed API using the C99 malloc API, platform-specific APIs and OpenMP, though address space reservation isn't implemented (though you can use this library as if it were implemented). This can perform quite well if your local memory allocator is capable of parallel execution.
+\item A ``compatibility" library for Microsoft Windows and POSIX which implements the proposed API using the C99 malloc API, platform-specific APIs and OpenMP, though address space reservation isn't implemented (though you can use this library as if it were implemented, it's just that non-relocating reallocs will mostly fail and relocating reallocs will memory copy). This can perform quite well if your local memory allocator is capable of parallel execution.
 \item A modified copy of dlmalloc \bref{dlmalloc} which is a fully featured implementation of the proposed API. dlmalloc is a well known memory allocator with support for the Microsoft Windows ``Win32" API and the standard POSIX API as implemented by Unix derived operating systems such as Linux, BSD and Apple Mac OS X among others.
 \end{enumerate}
 The following notes and cost estimates resulted from the above work:
