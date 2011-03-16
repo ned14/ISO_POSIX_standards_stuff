@@ -30,7 +30,11 @@ DEALINGS IN THE SOFTWARE.
 
 #ifndef N1527LIB_INCLUDED
 #define N1527LIB_INCLUDED
+#if 1 /* You have a modern compiler */
 #include <stdint.h>
+#else /* else if you have no stdint.h */
+typedef size_t uintmax_t;
+#endif
 #include <stdlib.h>
 
 /*! \file n1527lib.h

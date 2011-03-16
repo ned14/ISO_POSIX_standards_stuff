@@ -16,21 +16,22 @@
 \definecolor{changed}{rgb}{0,0.33,0}
 
 \standard{ISO SC22/WG14 -- N1527: Latency Reducing Memory Allocation}
-\yearofedition{\hfill [v1.93 Oct 2010]}
+\yearofedition{\hfill [v1.94 Mar 2011]}
 
 \begin{document}
 
 \title{N1527: Latency Reducing Memory Allocation in the C standard library}{\linebreak \large{A minimal change in the dynamic memory allocation API in order to reduce system memory bandwidth usage}}{}
 \maxtocdepth{sssclause}
 
-v1.93 15th October 2010
+v1.94 16th March 2011
 
-Niall Douglas MBS MA BSc \hfill ned Productions IT Consulting Limited \linebreak
+Niall Douglas BSc MA MBS MCollT \hfill ned Productions IT Consulting Limited \linebreak
 Cork, Ireland \hfill {\url{http://www.nedproductions.biz/}
 
 \small{\begin{itemize}
 \item \textbf{Changelog:}
 \tiny{\begin{itemize}
+\item v1.94 final (16th Mar 2011): Fixed errata including overflow bug in calloc spec.
 \item v1.93 final (15th Oct 2010): Changed from N1519 to N1527.
 \item v1.92 final (14th Oct 2010): Fixed up various typos. Specced the scenario when \texttt{struct mallocation *} is NULL.
 \item v1.91 draft 1 (11th Oct 2010): Pre-release to those who have partaken in consultation process so far.
@@ -544,10 +545,15 @@ void *calloc(size\_t nmemb, size\_t size);}
 \color{changed}
 \item The effects of the \texttt{calloc} function shall be equivalent to:
 \begin{verbatim}
-void *calloc{size_t nmemb, size_t size)
+void *calloc(size_t nmemb, size_t size)
 {
     void *mem=0;
     size_t count=1, realsize=nmemb*size;
+    if(SIZE_MAX/size<nmemb) /* check for overflow */
+    {
+        errno=ENOMEM;
+        return NULL;
+    }
     /* Optional */ if(0==realsize) realsize=1;
     batch_alloc1(NULL, &mem, &count, &realsize, 0, 0, M2_ZERO_MEMORY);
     return count ? mem : NULL;

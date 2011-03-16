@@ -1,6 +1,6 @@
 /* n1527lib_compat.c
 A C99 compatible implementation of the N1527 proposal for the C programming language
-(C) 2010 Niall Douglas http://www.nedproductions.biz/
+(C) 2010-2011 Niall Douglas http://www.nedproductions.biz/
 
 
 Boost Software License - Version 1.0 - August 17th, 2003

@@ -1,6 +1,6 @@
 /* n1527lib_dlmalloc.c
 A modified dlmalloc implementation of the N1527 proposal for the C programming language
-(C) 2010 Niall Douglas http://www.nedproductions.biz/
+(C) 2010-2011 Niall Douglas http://www.nedproductions.biz/
 
 
 Boost Software License - Version 1.0 - August 17th, 2003
@@ -234,6 +234,7 @@ _Bool n1527_batch_alloc5(int *errnos, struct n1527_mallocation5 **RESTRICT mdata
 
 N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_calloc(size_t nmemb, size_t size)
 {
+  if((size_t)-1/size<nmemb) { return 0; }
   if(!syspool) init_syspool();
   return mspace_malloc2(syspool, nmemb*size, 0, 0, M2_ZERO_MEMORY);
 }
