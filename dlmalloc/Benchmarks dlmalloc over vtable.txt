@@ -1,0 +1,40 @@
+N1527lib test program
+-=-=-=-=-=-=-=-=-=-=-
+Fragmenting free space ...
+Did 7940180 frees
+
+dlmalloc Speed test
+-------------------
+mspace_malloc() does 6003384.322520 mallocs/sec
+mspace_free() does 4687222.393629 frees/sec
+
+mspace_malloc() does 5955036.148736 mallocs/sec
+mspace_free() does 4703599.211983 frees/sec
+
+mspace_malloc() does 5952472.989518 mallocs/sec
+mspace_free() does 4769126.744827 frees/sec
+
+
+MPool Speed test
+----------------
+mpool_batch() does 6470322.661890 mallocs/sec
+mpool_batch() does 5847071.253173 frees/sec
+mpool_malloc() does 5604813.450595 mallocs/sec
+mpool_free() does 4832470.942592 frees/sec
+
+mpool_batch() does 6461997.252432 mallocs/sec
+mpool_batch() does 5928550.917249 frees/sec
+mpool_malloc() does 5584642.787261 mallocs/sec
+mpool_free() does 4767278.547977 frees/sec
+
+mpool_batch() does 6461096.672662 mallocs/sec
+mpool_batch() does 5885019.816142 frees/sec
+mpool_malloc() does 5580724.080448 mallocs/sec
+mpool_free() does 4768817.739655 frees/sec
+
+Press Return to exit ...
+
+
+MPool malloc is 1.065 (slower)
+MPool free is 0.99 (faster)
+

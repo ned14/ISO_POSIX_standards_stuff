@@ -33,245 +33,291 @@ DEALINGS IN THE SOFTWARE.
 #include <errno.h>
 #include <malloc.h>
 
+#if 1
+/* Temporary hacky stuff */
+  #ifdef WIN32
+   #define DLMALLOC_EXTSPEC extern __declspec(dllexport)
+  #elif defined(__GNUC__)
+   #define DLMALLOC_EXTSPEC extern __attribute__ ((visibility("default")))
+  #endif
+#endif
 #define ONLY_MSPACES 1
 /*#define DEBUG 1*/
 #include "malloc.c.h"
-static mspace syspool;
 
-static void init_syspool(void)
+struct mpool_s {
+  struct mpool_APIset *APIset;   /* This HAS to be here! */
+  mspace ms;
+  uintmax_t flags;
+  size_t alignment;
+  size_t sizerounding;
+};
+
+static mpool createpool(struct mpool_attribute_data **RESTRICT attributes);
+static void destroypool(mpool pool);
+static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
+static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_calloc(mpool pool, size_t nmemb, size_t size);
+static void _free(mpool pool, void *ptr);
+static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_malloc(mpool pool, size_t size);
+static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_realloc(mpool pool, void *ptr, size_t size);
+static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_try_realloc(mpool pool, void *ptr, size_t size);
+static size_t _usable_size(mpool pool, void *ptr);
+static mpool _ownerpool(void *ptr);
+static struct mpool_APIset dlmalloc_apiset = {
+  NULL,
+  createpool,
+  destroypool,
+  _batch,
+  _calloc,
+  _free,
+  _malloc,
+  _realloc,
+  _try_realloc,
+  _usable_size,
+  _ownerpool,
+};
+
+struct mpool_APIset default_allocator_APIset(void)
 {
+  return dlmalloc_apiset;
+}
+#if 1
+/* Temporary hacky stuff */
+N1527MALLOCEXTSPEC mspace get_dlmalloc_mspace(mpool pool)
+{
+  struct mpool_s *m=(struct mpool_s *) pool;
+  return m->ms;
+}
+#endif
+
+mpool createpool(struct mpool_attribute_data **RESTRICT attributes)
+{
+  mspace ms;
+  struct mpool_s *m;
   ensure_initialization();
-  ACQUIRE_MALLOC_GLOBAL_LOCK();
-  if(!syspool)
+  if((ms=create_mspace(0, 1)))
   {
-    if(!(syspool=create_mspace(0, 1))) abort();
-  }
-  RELEASE_MALLOC_GLOBAL_LOCK();
-}
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_alloc(size_t alignment, size_t size)
-{
-  if(!syspool) init_syspool();
-  return mspace_malloc2(syspool, size, alignment, 0, 0);
-}
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_realloc(void *ptr, size_t alignment, size_t size)
-{
-  if(!syspool) init_syspool();
-  return mspace_realloc2(syspool, ptr, size, alignment, 0, 0);
-}
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **n1527_batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags)
-{
-  int n;
-  size_t maxn=*count, _count=0;
-  if(!ptrs)
-  {
-    if(!(ptrs=(void **) n1527_calloc(maxn, sizeof(void *))))
+    if(!(m=(struct mpool_s *) mspace_calloc(ms, 1, sizeof(struct mpool_s))))
     {
-      *count=0;
+      destroy_mspace(ms);
       return NULL;
     }
-    flags|=M2_BATCH_IS_ALL_ALLOC;
+    m->APIset=&dlmalloc_apiset;
+    m->ms=ms;
+    if(attributes)
+    {
+      for(; *attributes; attributes++)
+      {
+        switch((*attributes)->id)
+        {
+        case MPOOL_ATTRIBUTE_ZEROMEMORY:
+          {
+            m->flags|=MPOOL_ZERO_MEMORY|MPOOL_ZERO_FREES;
+            break;
+          }
+        case MPOOL_ATTRIBUTE_ALIGNMENT:
+          {
+            struct mpool_attribute_alignment *a=(struct mpool_attribute_alignment *) *attributes;
+            m->alignment=a->alignment;
+            break;
+          }
+        case MPOOL_ATTRIBUTE_SIZEROUNDING:
+          {
+            struct mpool_attribute_sizerounding *a=(struct mpool_attribute_sizerounding *) *attributes;
+            m->sizerounding=a->rounding;
+            break;
+          }
+        default:
+          {
+            (*attributes)->error=ENOENT;
+          }
+        }
+      }
+    }
+    return m;
   }
-  if(!size || !(*size))
+  return NULL;
+}
+
+void destroypool(mpool pool)
+{
+  struct mpool_s *m=(struct mpool_s *) pool;
+  destroy_mspace(m->ms);
+}
+
+FORCEINLINE N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags)
+{
+  struct mpool_s *m=(struct mpool_s *) pool;
+  size_t maxn=*count, _count=0;
+  uintmax_t combinedflags=flags|m->flags;
+  /* Take care of malloc, calloc and free first as these have dlmalloc optimised batch implementations */
+  if(!ptrs || !ptrs[0] || !sizes)
   {
-    for(n=0; n<(int) maxn; n++)
+    if(1==maxn)
     {
-      if(ptrs[n])
+      if(!ptrs)
       {
-        mspace_free2(syspool, ptrs[n], (unsigned) flags);
-        ptrs[n]=0;
+        if(!(ptrs=(void **) mspace_calloc(m->ms, maxn, sizeof(void *))))
+        {
+          *count=0;
+          return NULL;
+        }
       }
-      _count++;
+      if(errnos) errnos[0]=0;
+      if(!sizes) /* free */
+      {
+        if(combinedflags & MPOOL_ZERO_FREES)
+          memset(ptrs[0], 0, mspace_usable_size(ptrs[0]));
+        mspace_free(m->ms, ptrs[0]);
+        ptrs[0]=0;
+        _count=1;
+      }
+      else if(!ptrs[0]) /* malloc or calloc */
+      {
+        if(m->alignment<=MALLOC_ALIGNMENT)
+        {
+          if(!(ptrs[0]=(combinedflags & MPOOL_ZERO_MEMORY) ? mspace_calloc(m->ms, 1, sizes[0]) : mspace_malloc(m->ms, sizes[0])))
+          {
+            if(errnos) errnos[0]=ENOMEM;
+          }
+          else
+          {
+            sizes[0]=mspace_usable_size(ptrs[0]);
+            _count=1;
+          }
+        }
+        else
+        {
+          if(!(ptrs[0]=mspace_memalign(m->ms, m->alignment, sizes[0])))
+          {
+            if(errnos) errnos[0]=ENOMEM;
+          }
+          else
+          {
+            sizes[0]=mspace_usable_size(ptrs[0]);
+            if(combinedflags & MPOOL_ZERO_MEMORY)
+              memset(ptrs[0], 0, sizes[0]);
+            _count=1;
+          }
+        }
+      }
+    }
+    else /* It's a batch op */
+    {
+      if(!sizes) /* free */
+      {
+        size_t n;
+        mspace_bulk_free(m->ms, ptrs, maxn);
+        for(n=0; n<maxn; n++)
+        {
+          ptrs[n]=0;
+          if(errnos) errnos[n]=0;
+        }
+        _count=maxn;
+      }
+      else if(!ptrs || !ptrs[0]) /* malloc or calloc */
+      {
+        if(m->alignment<=MALLOC_ALIGNMENT)
+        {
+          ptrs=ialloc((mstate) m->ms, maxn, sizes, (combinedflags & MPOOL_ZERO_MEMORY) ? 2 : 0, ptrs);
+          if(errnos)
+          {
+            size_t n;
+            for(n=0; n<maxn; n++)
+              errnos[n]=(ptrs && ptrs[n]) ? 0 : ENOMEM;
+          }
+          if(ptrs) _count=maxn;
+        }
+        else
+        {
+          fprintf(stderr, "Aligned batch malloc not implemented yet!\n");
+          abort();
+#ifdef __GNUC__
+#warning Aligned batch malloc not yet implemented
+#endif
+#ifdef _MSC_VER
+#pragma message(__FILE__ ": WARNING: Aligned batch malloc not yet implemented")
+#endif
+        }
+      }
     }
   }
-  else
+  else /* realloc */
   {
-    size_t _size;
+    size_t n;
+    for(n=0; n<maxn; n++)
     {
-      void *temp=mspace_malloc2(syspool, *size, alignment, reserve, (unsigned) flags);
-      *size=_size=mspace_usable_size(temp);
-      mspace_free2(syspool, temp, (unsigned) flags);
-    }
-    if((flags & M2_BATCH_IS_ALL_ALLOC) && !alignment && !reserve)
-    {
-      int opts=1/*all same size*/;
-      if(flags & M2_ZERO_MEMORY) opts|=2/*zero memory*/;
-      ialloc((mstate) syspool, maxn, size, opts, ptrs);
-      _count=maxn;
-    }
-    else for(n=0; n<(int) maxn; n++)
-    {
-      void *temp=0;
-      if(ptrs[n]) /* resize */
-      {
-        if(!(flags & M2_PREVENT_MOVE))
-          temp=mspace_realloc2(syspool, ptrs[n], _size, alignment, reserve, (unsigned) flags);
+      void *temp;
+      size_t oldsize=(combinedflags & (MPOOL_ZERO_MEMORY|MPOOL_ZERO_FREES)) ? mspace_usable_size(ptrs[n]) : 0;
+      if(combinedflags & MPOOL_ZERO_FREES)
+      { /* Zero any excess bytes */
+        if(sizes[n]<oldsize)
+          memset((char *) ptrs[n]+sizes[n], 0, oldsize-sizes[n]);
       }
-      else /* allocate */
+      if(!(temp=(flags & MPOOL_PREVENT_MOVE) ? mspace_realloc_in_place(m->ms, ptrs[n], sizes[n]) : mspace_realloc(m->ms, ptrs[n], sizes[n])))
       {
-        temp=mspace_malloc2(syspool, _size, alignment, reserve, (unsigned) flags);
+        if(errnos) errnos[n]=(flags & MPOOL_PREVENT_MOVE) ? ENOSPC : ENOMEM;
       }
-      if(temp) /* success */
+      else
       {
         ptrs[n]=temp;
-        if(errnos) errnos[n]=0;
+        sizes[n]=mspace_usable_size(ptrs[n]);
+        if(combinedflags & MPOOL_ZERO_MEMORY)
+        { /* Zero any new bytes */
+          if(sizes[n]>oldsize)
+            memset((char *) ptrs[n]+oldsize, 0, sizes[n]-oldsize);
+        }
         _count++;
-      }
-      else /* failure */
-      {
-        if(errnos) errnos[n]=(ptrs[n] && (flags & M2_PREVENT_MOVE)) ? ENOSPC : ENOMEM;
       }
     }
   }
   *count=_count;
   return ptrs;
-}
+}     
 
-_Bool n1527_batch_alloc2(int *errnos, struct n1527_mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags)
+/* Make the compiler generate specialised versions for each of these */
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_calloc(mpool pool, size_t nmemb, size_t size)
 {
-  int n;
-  size_t maxn=*count, _count=0;
-  if((flags & M2_BATCH_IS_ALL_ALLOC) && !alignment && !reserve)
-  {
-    void **ptrs=(void **) mspace_malloc(syspool, maxn*sizeof(void *));
-    size_t *sizes=(size_t *) mspace_malloc(syspool, maxn*sizeof(size_t));
-    int opts=0;
-    if(flags & M2_ZERO_MEMORY) opts|=2/*zero memory*/;
-    for(n=0; n<(int) maxn; n++)
-      sizes[n]=mdataptrs[n]->size;
-    ialloc((mstate) syspool, maxn, sizes, opts, ptrs);
-    for(n=0; n<(int) maxn; n++)
-      mdataptrs[n]->ptr=ptrs[n];
-    mspace_free(syspool, ptrs);
-    mspace_free(syspool, sizes);
-    _count=maxn;
-  }
-  else for(n=0; n<(int) maxn; n++)
-  {
-    if(!mdataptrs[n] || !mdataptrs[n]->size) /* free */
-    {
-      if(mdataptrs[n] && mdataptrs[n]->ptr)
-      {
-        mspace_free2(syspool, mdataptrs[n]->ptr, (unsigned) flags);
-        mdataptrs[n]->ptr=0;
-      }
-      _count++;
-    }
-    else
-    {
-      void *temp=0;
-      if(mdataptrs[n]->ptr) /* resize */
-      {
-        if(!(flags & M2_PREVENT_MOVE))
-          temp=mspace_realloc2(syspool, mdataptrs[n]->ptr, mdataptrs[n]->size, alignment, reserve, (unsigned) flags);
-      }
-      else /* allocate */
-      {
-        temp=mspace_malloc2(syspool, mdataptrs[n]->size, alignment, reserve, (unsigned) flags);
-      }
-      if(temp) /* success */
-      {
-        mdataptrs[n]->ptr=temp;
-        mdataptrs[n]->size=mspace_usable_size(temp);
-        if(errnos) errnos[n]=0;
-        _count++;
-      }
-      else /* failure */
-      {
-        if(errnos) errnos[n]=(mdataptrs[n]->ptr && (flags & M2_PREVENT_MOVE)) ? ENOSPC : ENOMEM;
-      }
-    }
-  }
-  *count=_count;
-  return _count==maxn;
+  void *ret=0;
+  size_t count=1;
+  /* Overflow check already done for us */
+  size*=nmemb;
+  return _batch(pool, NULL, &ret, &size, &count, MPOOL_ZERO_MEMORY), ret;
 }
-
-_Bool n1527_batch_alloc5(int *errnos, struct n1527_mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count)
+void _free(mpool pool, void *ptr)
 {
-  int n;
-  size_t maxn=*count, _count=0;
-  for(n=0; n<(int) maxn; n++)
-  {
-    if(!mdataptrs[n] || !mdataptrs[n]->size) /* free */
-    {
-      if(mdataptrs[n] && mdataptrs[n]->ptr)
-      {
-        mspace_free2(syspool, mdataptrs[n]->ptr, (unsigned) mdataptrs[n]->flags);
-        mdataptrs[n]->ptr=0;
-      }
-      _count++;
-    }
-    else
-    {
-      void *temp=0;
-      if(mdataptrs[n]->ptr) /* resize */
-      {
-        if(!(mdataptrs[n]->flags & M2_PREVENT_MOVE))
-          temp=mspace_realloc2(syspool, mdataptrs[n]->ptr, mdataptrs[n]->size, mdataptrs[n]->alignment, mdataptrs[n]->reserve, (unsigned) mdataptrs[n]->flags);
-      }
-      else /* allocate */
-      {
-        temp=mspace_malloc2(syspool, mdataptrs[n]->size, mdataptrs[n]->alignment, mdataptrs[n]->reserve, (unsigned) mdataptrs[n]->flags);
-      }
-      if(temp) /* success */
-      {
-        mdataptrs[n]->ptr=temp;
-        mdataptrs[n]->size=mspace_usable_size(temp);
-        if(errnos) errnos[n]=0;
-        _count++;
-      }
-      else /* failure */
-      {
-        if(errnos) errnos[n]=(mdataptrs[n]->ptr && (mdataptrs[n]->flags & M2_PREVENT_MOVE)) ? ENOSPC : ENOMEM;
-      }
-    }
-  }
-  *count=_count;
-  return _count==maxn;
+  size_t count=1;
+  _batch(pool, NULL, &ptr, NULL, &count, 0);
 }
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_calloc(size_t nmemb, size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_malloc(mpool pool, size_t size)
 {
-  if((size_t)-1/size<nmemb) { return 0; }
-  if(!syspool) init_syspool();
-  return mspace_malloc2(syspool, nmemb*size, 0, 0, M2_ZERO_MEMORY);
+  void *ret=0;
+  size_t count=1;
+  return _batch(pool, NULL, &ret, &size, &count, 0), ret;
 }
-
-void n1527_free(void *ptr)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_realloc(mpool pool, void *ptr, size_t size)
 {
-  if(!syspool) init_syspool();
-  mspace_free2(syspool, ptr, 0);
+  size_t count=1;
+  return _batch(pool, NULL, &ptr, &size, &count, 0), ptr;
 }
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_malloc(size_t size)
+N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_try_realloc(mpool pool, void *ptr, size_t size)
 {
-  if(!syspool) init_syspool();
-  return mspace_malloc2(syspool, size, 0, 0, 0);
+  size_t count=1;
+  return _batch(pool, NULL, &ptr, &size, &count, MPOOL_PREVENT_MOVE), ptr;
 }
-
-size_t n1527_malloc_usable_size(void *ptr)
+size_t _usable_size(mpool pool, void *ptr)
 {
   return mspace_usable_size(ptr);
 }
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_realloc(void *ptr, size_t size)
+mpool _ownerpool(void *ptr)
 {
-  if(!syspool) init_syspool();
-  return mspace_realloc2(syspool, ptr, size, 0, 0, 0);
+  struct mpool_s *m=0;
+#ifdef __GNUC__
+#warning ownerpool() not yet implemented
+#endif
+#ifdef _MSC_VER
+#pragma message(__FILE__ ": WARNING: ownerpool() not yet implemented")
+#endif
+  return NULL;
 }
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_aligned_realloc(void *ptr, size_t alignment, size_t size)
-{
-  if(!syspool) init_syspool();
-  return mspace_realloc2(syspool, ptr, size, alignment, 0, M2_PREVENT_MOVE);
-}
-
-N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_realloc(void *ptr, size_t size)
-{
-  if(!syspool) init_syspool();
-  return mspace_realloc2(syspool, ptr, size, 0, 0, M2_PREVENT_MOVE);
-}
-
 

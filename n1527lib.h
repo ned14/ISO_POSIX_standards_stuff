@@ -1,6 +1,6 @@
 /* n1527lib.h
 Declares and defines the N1527 proposal for the C programming language
-(C) 2010 Niall Douglas http://www.nedproductions.biz/
+(C) 2010-2011 Niall Douglas http://www.nedproductions.biz/
 
 
 Boost Software License - Version 1.0 - August 17th, 2003
@@ -28,14 +28,24 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
+/*#define N1527MALLOC_DONTREPLACESTD*/
+
 #ifndef N1527LIB_INCLUDED
 #define N1527LIB_INCLUDED
+#define calloc calloc_disabled
+#define free free_disabled
+#define malloc malloc_disabled
+#define realloc realloc_disabled
 #if 1 /* You have a modern compiler */
 #include <stdint.h>
 #else /* else if you have no stdint.h */
 typedef size_t uintmax_t;
 #endif
 #include <stdlib.h>
+#undef calloc
+#undef free
+#undef malloc
+#undef realloc
 
 /*! \file n1527lib.h
 \brief Declares and defines the N1527 proposal for the C programming language
@@ -45,6 +55,10 @@ typedef size_t uintmax_t;
 #if !defined(RESTRICT) && (defined(_MSC_VER) || defined(__GNUC__))
 #define RESTRICT __restrict
 #endif
+#if !defined(__cplusplus) && !defined(inline) && (defined(_MSC_VER) || defined(__GNUC__))
+#define inline __inline
+#endif
+/* These are constants from C1X */
 typedef unsigned char _Bool;
 
 /* If we don't have it we don't have it */
@@ -97,23 +111,17 @@ the DLL.
 
 /******** The standard definition stuff begins here ********/
 
-#ifndef M2_FLAGS_DEFINED
-#define M2_FLAGS_DEFINED
+#ifndef MPOOL_FLAGS_DEFINED
+#define MPOOL_FLAGS_DEFINED
 
-#define M2_ZERO_MEMORY          (1<<0)
-#define M2_PREVENT_MOVE         (1<<1)
-#define M2_CONSTANT_TIME        (1<<2)
-#define M2_RESERVE_IS_MULT      (1<<3)
-#define M2_BATCH_IS_ALL_ALLOC   (1<<4)
-#define M2_BATCH_IS_ALL_REALLOC (1<<5)
-#define M2_BATCH_IS_ALL_FREE    (1<<6)
+#define MPOOL_ZERO_MEMORY          (1<<0)
+#define MPOOL_ZERO_FREES           (1<<1)
+#define MPOOL_PREVENT_MOVE         (1<<2)
+#define MPOOL_FREE_NOW             (1<<3)
 
-/* Proprietary */
-#define M2_ALWAYS_MMAP          (1<<15)
-
-#define M2_USERFLAGS_FIRST      (1<<16)
-#define M2_USERFLAGS_LAST       (1<<31)
-#define M2_USERFLAGS_MASK       0xffff0000
+#define MPOOL_USERFLAGS_FIRST      (1<<16)
+#define MPOOL_USERFLAGS_LAST       (1<<31)
+#define MPOOL_USERFLAGS_MASK       0xffff0000
 
 #endif /* M2_FLAGS_DEFINED */
 
@@ -121,52 +129,176 @@ the DLL.
 extern "C" {
 #endif
 
-#ifndef MALLOCATION2_DEFINED
-#define MALLOCATION2_DEFINED
-/*! \brief The structure used by the batch_alloc2() function */
-struct n1527_mallocation2 {
-  void *ptr;
-  size_t size;
+struct mpool_s;
+typedef struct mpool_s *mpool;
+
+#ifndef MPOOL_ATTRIBUTE_DEFINED
+#define MPOOL_ATTRIBUTE_DEFINED
+/*! \enum mpool_attribute
+\brief Encodes a memory pool attribute
+*/
+enum mpool_attribute {
+  MPOOL_ATTRIBUTE_NULL,               //!< This attribute will be ignored
+  MPOOL_ATTRIBUTE_ZEROMEMORY,         //!< Sets always zero unused memory for this memory pool. See struct mpool_attribute_zeromemory
+  MPOOL_ATTRIBUTE_ALIGNMENT,          //!< Sets alignment for this memory pool. See struct mpool_attribute_alignment
+  MPOOL_ATTRIBUTE_SIZEROUNDING,       //!< Sets size rounding for this memory pool. See struct mpool_attribute_sizerounding
+  MPOOL_ATTRIBUTE_INSTALL_ALLOCATOR,  //!< Installs a new allocator
+  MPOOL_ATTRIBUTE_REMOVE_ALLOCATOR,   //!< Removes a previously installed allocator
+
+  MPOOL_ATTRIBUTE_LAST                //!< First free attribute available
 };
 #endif
 
-#ifndef MALLOCATION5_DEFINED
-#define MALLOCATION5_DEFINED
-/*! \brief The structure used by the batch_alloc5() function */
-struct n1527_mallocation5 {
-  void *ptr;
-  size_t size;
-  size_t alignment;
-  size_t reserve;
-  uintmax_t flags;
+#ifndef MPOOL_ATTRIBUTE_DATA_DEFINED
+#define MPOOL_ATTRIBUTE_DATA_DEFINED
+/*! \brief Describes the common header for all memory pool attributes */
+struct mpool_attribute_data;
+struct mpool_attribute_data {
+  int id;                                   //!< An id from enum mpool_attribute, or proprietary extension
+  size_t length;                            //!< Typically sizeof(type), but may be shorter if we don't want to compare the whole structure
+  int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
+};
+/*! \brief Sets that all memory in a memory pool is zeroed as soon as it becomes unused */
+struct mpool_attribute_zeromemory {
+  int id;                                   //!< Set to MPOOL_ATTRIBUTE_ZEROMEMORY
+  size_t length;                            //!< sizeof(type)
+  int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
+};
+/*! \brief Describes the minimum alignment for all data allocated within a memory pool */
+struct mpool_attribute_alignment {
+  int id;                                   //!< Set to MPOOL_ATTRIBUTE_ALIGNMENT
+  size_t length;                            //!< sizeof(type)
+  int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
+  size_t alignment;                         //!< Set to the alignment to be used for allocations in this pool
+};
+/*! \brief Describes the size rounding for all data allocated within a memory pool */
+struct mpool_attribute_sizerounding {
+  int id;                                   //!< Set to MPOOL_ATTRIBUTE_SIZEROUNDING
+  size_t length;                            //!< sizeof(type)
+  int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
+  size_t rounding;
+};
+/*! \brief Defines an allocator API set */
+struct mpool_APIset {
+  const struct mpool_attribute_data **attributes;                           //!< Attribute set to match
+  mpool (*createpool)(struct mpool_attribute_data **RESTRICT attributes);   //!< Creates a pool
+  void (*destroypool)(mpool pool);                                          //!< Destroys a pool
+  void **(*batch)(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
+  void *(*calloc)(mpool pool, size_t nmemb, size_t size);
+  void (*free)(mpool pool, void *ptr);
+  void *(*malloc)(mpool pool, size_t size);
+  void *(*realloc)(mpool pool, void *ptr, size_t size);
+  void *(*try_realloc)(mpool pool, void *ptr, size_t size);
+  size_t (*usable_size)(mpool pool, void *ptr);
+  mpool (*ownerpool)(void *ptr);
 };
 #endif
 
-/*! \brief Allocates aligned memory */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_alloc(size_t alignment, size_t size);
-/*! \brief Resizes aligned memory */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_aligned_realloc(void *ptr, size_t alignment, size_t size);
-/*! \brief Performs a sequence of same-sized allocation, resizes and deallocations */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **n1527_batch_alloc1(int *errnos, void **ptrs, size_t *RESTRICT count, size_t *RESTRICT size, size_t alignment, size_t reserve, uintmax_t flags);
-/*! \brief Performs a sequences of allocations, resizes and deallocations */
-N1527MALLOCEXTSPEC _Bool n1527_batch_alloc2(int *errnos, struct n1527_mallocation2 **RESTRICT mdataptrs, size_t *RESTRICT count, size_t alignment, size_t reserve, uintmax_t flags);
-/*! \brief Performs a sequences of allocations, resizes and deallocations */
-N1527MALLOCEXTSPEC _Bool n1527_batch_alloc5(int *errnos, struct n1527_mallocation5 **RESTRICT mdataptrs, size_t *RESTRICT count);
+/*! \brief Obtains a desired memory pool */
+N1527MALLOCEXTSPEC mpool mpool_obtain(struct mpool_attribute_data **RESTRICT attributes);
+/*! \brief Destroys a memory pool */
+N1527MALLOCEXTSPEC void mpool_release(mpool pool);
+/*! \brief Returns all known memory pools */
+N1527MALLOCEXTSPEC size_t mpool_knownpools(mpool *poollist, size_t poollistlen);
+/*! \brief Returns the usage count for a memory pool */
+N1527MALLOCEXTSPEC size_t mpool_usagecount(mpool pool);
+/*! \brief Synchronises any outstanding operations on a memory pool for the calling thread */
+N1527MALLOCEXTSPEC void mpool_sync(mpool pool);
+
+struct mpool_s_ {
+  struct mpool_APIset *APIset;
+};
+
+/*! \brief Performs a sequence of allocations, resizes and deallocations */
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **mpool_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags)
+{
+  struct mpool_s_ *p=(struct mpool_s_ *) pool;
+  return p->APIset->batch(pool, errnos, ptrs, sizes, count, flags);
+}
 /*! \brief Allocates zeroed memory */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_calloc(size_t nmemb, size_t size);
-/*! \brief Frees both aligned and non-aligned blocks */
-N1527MALLOCEXTSPEC void n1527_free(void *ptr);
-/*! \brief Allocates zeroed memory */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_malloc(size_t size);
-/*! \brief Returns the size of an existing block */
-N1527MALLOCEXTSPEC size_t n1527_malloc_usable_size(void *ptr);
-/*! \brief Allocates zeroed memory */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_realloc(void *ptr, size_t size);
-/*! \brief A non-relocating aligned resize */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_aligned_realloc(void *ptr, size_t alignment, size_t size);
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *mpool_calloc(mpool pool, size_t nmemb, size_t size)
+{
+  struct mpool_s_ *p=(struct mpool_s_ *) pool;
+  if((size_t)-1/size<nmemb) { return 0; }
+  return p->APIset->calloc(pool, nmemb, size);
+}
+/*! \brief Frees blocks */
+inline void mpool_free(mpool pool, void *ptr)
+{
+  struct mpool_s_ *p=(struct mpool_s_ *) pool;
+  p->APIset->free(pool, ptr);
+}
+/*! \brief Allocates memory */
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *mpool_malloc(mpool pool, size_t size)
+{
+  struct mpool_s_ *p=(struct mpool_s_ *) pool;
+  return p->APIset->malloc(pool, size);
+}
+/*! \brief Resizes an existing block */
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *mpool_realloc(mpool pool, void *ptr, size_t size)
+{
+  struct mpool_s_ *p=(struct mpool_s_ *) pool;
+  return p->APIset->realloc(pool, ptr, size);
+}
 /*! \brief A non-relocating resize */
-N1527MALLOCEXTSPEC N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *n1527_try_realloc(void *ptr, size_t size);
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *mpool_try_realloc(mpool pool, void *ptr, size_t size)
+{
+  struct mpool_s_ *p=(struct mpool_s_ *) pool;
+  return p->APIset->try_realloc(pool, ptr, size);
+}
+/*! \brief Returns the size of an existing block */
+inline size_t mpool_usable_size(mpool pool, void *ptr)
+{
+  struct mpool_s_ *p=(struct mpool_s_ *) pool;
+  return p->APIset->usable_size(pool, ptr);
+}
+/*! \brief Returns the memory pool owning the block */
+inline mpool mpool_owner(void *ptr)
+{
+#ifdef __GNUC__
+#warning mpool_owner() not yet implemented
+#endif
+#ifdef _MSC_VER
+#pragma message(__FILE__ ": WARNING: mpool_owner() not yet implemented")
+#endif
+  return NULL;
+}
 
+#ifndef N1527MALLOC_DONTREPLACESTD
+/*! \brief Allocates zeroed memory */
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *calloc(size_t nmemb, size_t size)
+{
+  return mpool_calloc(mpool_obtain(0), nmemb, size);
+}
+/*! \brief Frees blocks */
+inline void free(void *ptr)
+{
+  mpool_free(mpool_obtain(0), ptr);
+}
+/*! \brief Allocates memory */
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *malloc(size_t size)
+{
+  return mpool_malloc(mpool_obtain(0), size);
+}
+/*! \brief Returns the size of an existing block */
+inline size_t malloc_usable_size(void *ptr)
+{
+  return mpool_usable_size(mpool_obtain(0), ptr);
+}
+/*! \brief Resizes an existing block */
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *realloc(void *ptr, size_t size)
+{
+  return mpool_realloc(mpool_obtain(0), ptr, size);
+}
+/*! \brief A non-relocating resize */
+inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *try_realloc(void *ptr, size_t size)
+{
+  return mpool_try_realloc(mpool_obtain(0), ptr, size);
+}
+#endif
+
+/*! \brief This is an internal bootstrapping function */
+extern struct mpool_APIset default_allocator_APIset(void);
 
 #if defined(__cplusplus)
 }
