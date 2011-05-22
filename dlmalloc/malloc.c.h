@@ -4,7 +4,7 @@
   http://creativecommons.org/publicdomain/zero/1.0/ Send questions,
   comments, complaints, performance data, etc to dl@cs.oswego.edu
 
-* Version pre-2.8.5 Tue May 17 09:37:10 2011  Doug Lea  (dl at altair)
+* Version pre-2.8.5 Sun May 22 10:26:02 2011  Doug Lea  (dl at gee)
 
    Note: There may be an updated version of this malloc obtainable at
            ftp://gee.cs.oswego.edu/pub/misc/malloc.c
@@ -104,23 +104,28 @@
        no errors or vulnerabilities, you can define INSECURE to 1,
        which might (or might not) provide a small performance improvement.
 
-       It is alao possible to limit the maximum total allocatable
+       It is also possible to limit the maximum total allocatable
        space, using malloc_set_footprint_limit. This is not
        designed as a security feature in itself (calls to set limits
        are not screened or privileged), but may be useful as one
        aspect of a secure implementation.
 
-  Thread-safety: NOT thread-safe unless USE_LOCKS defined
+  Thread-safety: NOT thread-safe unless USE_LOCKS defined non-zero
        When USE_LOCKS is defined, each public call to malloc, free,
-       etc is surrounded with either a pthread mutex or a win32
-       spinlock (depending on WIN32). This is not especially fast, and
-       can be a major bottleneck.  It is designed only to provide
-       minimal protection in concurrent environments, and to provide a
-       basis for extensions.  If you are using malloc in a concurrent
-       program, consider instead using nedmalloc
+       etc is surrounded with a lock. By default, this uses a plain
+       pthread mutex, win32 critical section, or a spin-lock if if
+       available for the platform and not disabled by setting
+       USE_SPIN_LOCKS=0.  However, if USE_RECURSIVE_LOCKS is defined,
+       recursive versions are used instead (which are not required for
+       base functionality but may be needed in layered extensions).
+       Using a global lock is not especially fast, and can be a major
+       bottleneck.  It is designed only to provide minimal protection
+       in concurrent environments, and to provide a basis for
+       extensions.  If you are using malloc in a concurrent program,
+       consider instead using nedmalloc
        (http://www.nedprod.com/programs/portable/nedmalloc/) or
-       ptmalloc (See http://www.malloc.de), which are derived
-       from versions of this malloc.
+       ptmalloc (See http://www.malloc.de), which are derived from
+       versions of this malloc.
 
   System requirements: Any combination of MORECORE and/or MMAP/MUNMAP
        This malloc can use unix sbrk or any emulation (invoked using
@@ -209,7 +214,7 @@
   conformance is only weakly checked, so usage errors are not always
   caught). If FOOTERS is defined, then each chunk carries around a tag
   indicating its originating mspace, and frees are directed to their
-  originating spaces.
+  originating spaces. Normally, this requires use of locks.
 
  -------------------------  Compile-time options ---------------------------
 
@@ -234,12 +239,12 @@ WIN32                    default: defined if _WIN32 defined
   in cases where MSC and gcc (cygwin) are known to differ on WIN32,
   conditions use _MSC_VER to distinguish them.
 
-DLMALLOC_EXTSPEC         default: extern
-  Defines how the dlmalloc APIs are declared. If you wanted dlmalloc's
-  APIs to be exported from a Windows DLL, you might define this to
-  extern __declspace(dllexport) instead; or if you wanted the APIs to
-  be exported from a POSIX ELF shared object, you might define this to
-  extern __attribute__ ((visibility("default"))).
+DLMALLOC_EXPORT       default: extern
+  Defines how public APIs are declared. If you want to export via a
+  Windows DLL, you might define this as
+    #define DLMALLOC_EXPORT extern  __declspace(dllexport)
+  If you want a POSIX ELF shared object, you might use
+    #define DLMALLOC_EXPORT extern __attribute__((visibility("default")))
 
 MALLOC_ALIGNMENT         default: (size_t)8
   Controls the minimum alignment for malloc'ed chunks.  It must be a
@@ -269,19 +274,10 @@ USE_SPIN_LOCKS           default: 1 iff USE_LOCKS and spin locks available
   MS compilers.  Otherwise, posix locks or win32 critical sections are
   used.
 
-USE_GCC_SPIN_LOCKS       default: 1 iff gcc >= 4.1
-  If USE_SPIN_LOCKS is true, and using GCC 4.1 or later,
-  use the GCC __sync_lock_test_and_set and __sync_lock_release
-  built-in functions instead of assembly code.  These are available
-  on all machines, not just x86.
-
-USE_OWNED_LOCKS         default: 0
-  By default, simple mutexes are used for locks. But if
-  USE_OWNED_LOCKS is true, each lock acquisition sets the owner of the
-  space to the current thread, and each release clears it. Definitions
-  are supplied for win32 and on those posix platforms for which
-  pthread_t is a scalar type.  For others, you must define
-  CURRENT_THREAD, MSPACE_OWNER_TYPE, UNOWNED, and EQ_OWNER
+USE_RECURSIVE_LOCKS      default: not defined
+  If defined nonzero, uses recursive (aka reentrant) locks, otherwise
+  uses plain mutexes. This is not required for malloc proper, but may
+  be needed for layered allocators such as nedmalloc.
 
 FOOTERS                  default: 0
   If true, provide extra checking and dispatching by placing
@@ -333,10 +329,7 @@ DEBUG                    default: NOT defined
   algorithms.  The checking is fairly extensive, and will slow down
   execution noticeably. Calling malloc_stats or mallinfo with DEBUG
   set will attempt to check every non-mmapped allocated and free chunk
-  in the course of computing the summaries. Note: It is possible,
-  although unlikely, that underlying implementations of "assert"
-  call malloc, in which case failures may further corrupt space
-  or freeze programs.
+  in the course of computing the summaries.
 
 ABORT_ON_ASSERT_FAILURE   default: defined as 1 (true)
   Debugging assertion failures can be nearly impossible if your
@@ -527,8 +520,9 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 #ifndef DLMALLOC_VERSION
 #define DLMALLOC_VERSION 20805
 #endif /* DLMALLOC_VERSION */
-#ifndef DLMALLOC_EXTSPEC
-#define DLMALLOC_EXTSPEC extern
+
+#ifndef DLMALLOC_EXPORT
+#define DLMALLOC_EXPORT extern
 #endif
 
 #ifndef WIN32
@@ -553,6 +547,7 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 #define LACKS_STRINGS_H
 #define LACKS_SYS_TYPES_H
 #define LACKS_ERRNO_H
+#define LACKS_SCHED_H
 #ifndef MALLOC_FAILURE_ACTION
 #define MALLOC_FAILURE_ACTION
 #endif /* MALLOC_FAILURE_ACTION */
@@ -581,51 +576,31 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 #include <sys/types.h>  /* For size_t */
 #endif  /* LACKS_SYS_TYPES_H */
 
-#ifndef USE_OWNED_LOCKS
-#define USE_OWNED_LOCKS 0     /* define to a value */
-#elif USE_OWNED_LOCKS != 0
-#define USE_OWNED_LOCKS 1
-#endif  /* USE_OWNED_LOCKS */
-
-#ifndef USE_GCC_SPIN_LOCKS
-#if defined(__GNUC__)&& (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 1))
-#define USE_GCC_SPIN_LOCKS 1
-#else
-#define USE_GCC_SPIN_LOCKS 0
-#endif  /* gcc >= 4.1 */
-#endif  /* USE_GCC_SPIN_LOCKS */
-
-#if USE_GCC_SPIN_LOCKS ||                                               \
-  (defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))) ||  \
-  (defined(_MSC_VER) && _MSC_VER>=1310)
-#define SPIN_LOCKS_AVAILABLE 1
-#else
-#define SPIN_LOCKS_AVAILABLE 0
-#endif
-
-#ifndef USE_SPIN_LOCKS
-#if !defined(USE_LOCKS) || !USE_LOCKS || !SPIN_LOCKS_AVAILABLE
-#define USE_SPIN_LOCKS 0
-#elif USE_SPIN_LOCKS != 0
-#define USE_SPIN_LOCKS 1
-#endif
-#endif /* USE_SPIN_LOCKS */
-
-#ifndef USE_LOCKS
-#if USE_SPIN_LOCKS || USE_OWNED_LOCKS
-#define USE_LOCKS 1
-#else
-#define USE_LOCKS 0
-#endif /* USE_SPIN_LOCKS || USE_OWNED_LOCKS */
-#endif  /* USE_LOCKS */
-
 /* The maximum possible size_t value has all bits set */
 #define MAX_SIZE_T           (~(size_t)0)
 
+#ifndef USE_LOCKS /* ensure true if spin or recursive locks set */
+#define USE_LOCKS  ((defined(USE_SPIN_LOCKS) && USE_SPIN_LOCKS != 0) || \
+                    (defined(USE_RECURSIVE_LOCKS) && USE_RECURSIVE_LOCKS != 0))
+#endif /* USE_LOCKS */
+
+#if USE_LOCKS /* Spin locks for gcc >= 4.1, older gcc on x86, MSC >= 1310 */
+#if ((defined(__GNUC__) &&                                              \
+      ((__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 1)) ||      \
+       defined(__i386__) || defined(__x86_64__))) ||                    \
+     (defined(_MSC_VER) && _MSC_VER>=1310))
+#ifndef USE_SPIN_LOCKS
+#define USE_SPIN_LOCKS 1
+#endif /* USE_SPIN_LOCKS */
+#elif USE_SPIN_LOCKS
+#error "USE_SPIN_LOCKS defined without implementation"
+#endif /* ... locks available... */
+#elif !defined(USE_SPIN_LOCKS)
+#define USE_SPIN_LOCKS 0
+#endif /* USE_LOCKS */
+
 #ifndef ONLY_MSPACES
-#define ONLY_MSPACES 0     /* define to a value */
-#elif ONLY_MSPACES != 0
-#define ONLY_MSPACES 1
+#define ONLY_MSPACES 0
 #endif  /* ONLY_MSPACES */
 #ifndef MSPACES
 #if ONLY_MSPACES
@@ -652,13 +627,9 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
 
 #ifndef INSECURE
 #define INSECURE 0
-#elif INSECURE != 0
-#define INSECURE 1
 #endif  /* INSECURE */
 #ifndef MALLOC_INSPECT_ALL
-#define MALLOC_INSPECT_ALL 0     /* define to a value */
-#elif MALLOC_INSPECT_ALL != 0
-#define MALLOC_INSPECT_ALL 1
+#define MALLOC_INSPECT_ALL 0
 #endif  /* MALLOC_INSPECT_ALL */
 #ifndef HAVE_MMAP
 #define HAVE_MMAP 1
@@ -859,7 +830,6 @@ extern "C" {
 #define dlindependent_calloc   independent_calloc
 #define dlindependent_comalloc independent_comalloc
 #define dlbulk_free            bulk_free
-#define dlmalloc_is_locked_by_current_thread malloc_is_locked_by_current_thread
 #endif /* USE_DL_PREFIX */
 
 /*
@@ -876,7 +846,7 @@ extern "C" {
   maximum supported value of n differs across systems, but is in all
   cases less than the maximum representable value of a size_t.
 */
-DLMALLOC_EXTSPEC void* dlmalloc(size_t);
+DLMALLOC_EXPORT void* dlmalloc(size_t);
 
 /*
   free(void* p)
@@ -885,14 +855,14 @@ DLMALLOC_EXTSPEC void* dlmalloc(size_t);
   It has no effect if p is null. If p was not malloced or already
   freed, free(p) will by default cause the current program to abort.
 */
-DLMALLOC_EXTSPEC void  dlfree(void*);
+DLMALLOC_EXPORT void  dlfree(void*);
 
 /*
   calloc(size_t n_elements, size_t element_size);
   Returns a pointer to n_elements * element_size bytes, with all locations
   set to zero.
 */
-DLMALLOC_EXTSPEC void* dlcalloc(size_t, size_t);
+DLMALLOC_EXPORT void* dlcalloc(size_t, size_t);
 
 /*
   realloc(void* p, size_t n)
@@ -916,7 +886,7 @@ DLMALLOC_EXTSPEC void* dlcalloc(size_t, size_t);
   The old unix realloc convention of allowing the last-free'd chunk
   to be used as an argument to realloc is not supported.
 */
-DLMALLOC_EXTSPEC void* dlrealloc(void*, size_t);
+DLMALLOC_EXPORT void* dlrealloc(void*, size_t);
 
 /*
   realloc_in_place(void* p, size_t n)
@@ -931,7 +901,7 @@ DLMALLOC_EXTSPEC void* dlrealloc(void*, size_t);
 
   Returns p if successful; otherwise null.
 */
-DLMALLOC_EXTSPEC void* dlrealloc_in_place(void*, size_t);
+DLMALLOC_EXPORT void* dlrealloc_in_place(void*, size_t);
 
 /*
   memalign(size_t alignment, size_t n);
@@ -945,7 +915,7 @@ DLMALLOC_EXTSPEC void* dlrealloc_in_place(void*, size_t);
 
   Overreliance on memalign is a sure way to fragment space.
 */
-DLMALLOC_EXTSPEC void* dlmemalign(size_t, size_t);
+DLMALLOC_EXPORT void* dlmemalign(size_t, size_t);
 
 /*
   int posix_memalign(void** pp, size_t alignment, size_t n);
@@ -955,14 +925,14 @@ DLMALLOC_EXTSPEC void* dlmemalign(size_t, size_t);
   returns EINVAL if the alignment is not a power of two (3) fails and
   returns ENOMEM if memory cannot be allocated.
 */
-DLMALLOC_EXTSPEC int dlposix_memalign(void**, size_t, size_t);
+DLMALLOC_EXPORT int dlposix_memalign(void**, size_t, size_t);
 
 /*
   valloc(size_t n);
   Equivalent to memalign(pagesize, n), where pagesize is the page
   size of the system. If the pagesize is unknown, 4096 is used.
 */
-DLMALLOC_EXTSPEC void* dlvalloc(size_t);
+DLMALLOC_EXPORT void* dlvalloc(size_t);
 
 /*
   mallopt(int parameter_number, int parameter_value)
@@ -986,7 +956,7 @@ DLMALLOC_EXTSPEC void* dlvalloc(size_t);
   M_GRANULARITY        -2     page size   any power of 2 >= page size
   M_MMAP_THRESHOLD     -3      256*1024   any   (or 0 if no MMAP support)
 */
-DLMALLOC_EXTSPEC int dlmallopt(int, int);
+DLMALLOC_EXPORT int dlmallopt(int, int);
 
 /*
   malloc_footprint();
@@ -997,7 +967,7 @@ DLMALLOC_EXTSPEC int dlmallopt(int, int);
   Even if locks are otherwise defined, this function does not use them,
   so results might not be up to date.
 */
-DLMALLOC_EXTSPEC size_t dlmalloc_footprint(void);
+DLMALLOC_EXPORT size_t dlmalloc_footprint(void);
 
 /*
   malloc_max_footprint();
@@ -1010,7 +980,7 @@ DLMALLOC_EXTSPEC size_t dlmalloc_footprint(void);
   otherwise defined, this function does not use them, so results might
   not be up to date.
 */
-DLMALLOC_EXTSPEC size_t dlmalloc_max_footprint(void);
+DLMALLOC_EXPORT size_t dlmalloc_max_footprint(void);
 
 /*
   malloc_footprint_limit();
@@ -1021,7 +991,7 @@ DLMALLOC_EXTSPEC size_t dlmalloc_max_footprint(void);
   guarantee that this number of bytes can actually be obtained from
   the system.
 */
-DLMALLOC_EXTSPEC size_t dlmalloc_footprint_limit();
+DLMALLOC_EXPORT size_t dlmalloc_footprint_limit();
 
 /*
   malloc_set_footprint_limit();
@@ -1035,7 +1005,7 @@ DLMALLOC_EXTSPEC size_t dlmalloc_footprint_limit();
   additional system memory will fail. However, invocation cannot
   retroactively deallocate existing used memory.
 */
-DLMALLOC_EXTSPEC size_t dlmalloc_set_footprint_limit(size_t bytes);
+DLMALLOC_EXPORT size_t dlmalloc_set_footprint_limit(size_t bytes);
 
 #if MALLOC_INSPECT_ALL
 /*
@@ -1066,7 +1036,7 @@ DLMALLOC_EXTSPEC size_t dlmalloc_set_footprint_limit(size_t bytes);
 
   malloc_inspect_all is compiled only if MALLOC_INSPECT_ALL is defined.
 */
-DLMALLOC_EXTSPEC void dlmalloc_inspect_all(void(*handler)(void*, void *, size_t, void*),
+DLMALLOC_EXPORT void dlmalloc_inspect_all(void(*handler)(void*, void *, size_t, void*),
                            void* arg);
 
 #endif /* MALLOC_INSPECT_ALL */
@@ -1094,7 +1064,7 @@ DLMALLOC_EXTSPEC void dlmalloc_inspect_all(void(*handler)(void*, void *, size_t,
   be kept as longs, the reported values may wrap around zero and
   thus be inaccurate.
 */
-struct mallinfo dlmallinfo(void);
+DLMALLOC_EXPORT struct mallinfo dlmallinfo(void);
 #endif /* NO_MALLINFO */
 
 /*
@@ -1146,7 +1116,7 @@ struct mallinfo dlmallinfo(void);
     return first;
   }
 */
-DLMALLOC_EXTSPEC void** dlindependent_calloc(size_t, size_t, void**);
+DLMALLOC_EXPORT void** dlindependent_calloc(size_t, size_t, void**);
 
 /*
   independent_comalloc(size_t n_elements, size_t sizes[], void* chunks[]);
@@ -1204,7 +1174,7 @@ DLMALLOC_EXTSPEC void** dlindependent_calloc(size_t, size_t, void**);
   since it cannot reuse existing noncontiguous small chunks that
   might be available for some of the elements.
 */
-DLMALLOC_EXTSPEC void** dlindependent_comalloc(size_t, size_t*, void**);
+DLMALLOC_EXPORT void** dlindependent_comalloc(size_t, size_t*, void**);
 
 /*
   bulk_free(void* array[], size_t n_elements)
@@ -1215,14 +1185,14 @@ DLMALLOC_EXTSPEC void** dlindependent_comalloc(size_t, size_t*, void**);
   is returned.  For large arrays of pointers with poor locality, it
   may be worthwhile to sort this array before calling bulk_free.
 */
-DLMALLOC_EXTSPEC size_t  dlbulk_free(void**, size_t n_elements);
+DLMALLOC_EXPORT size_t  dlbulk_free(void**, size_t n_elements);
 
 /*
   pvalloc(size_t n);
   Equivalent to valloc(minimum-page-that-holds(n)), that is,
   round up n to nearest pagesize.
  */
-DLMALLOC_EXTSPEC void*  dlpvalloc(size_t);
+DLMALLOC_EXPORT void*  dlpvalloc(size_t);
 
 /*
   malloc_trim(size_t pad);
@@ -1245,7 +1215,7 @@ DLMALLOC_EXTSPEC void*  dlpvalloc(size_t);
 
   Malloc_trim returns 1 if it actually released any memory, else 0.
 */
-DLMALLOC_EXTSPEC int  dlmalloc_trim(size_t);
+DLMALLOC_EXPORT int  dlmalloc_trim(size_t);
 
 /*
   malloc_stats();
@@ -1266,7 +1236,7 @@ DLMALLOC_EXTSPEC int  dlmalloc_trim(size_t);
   malloc_stats prints only the most commonly interesting statistics.
   More information can be obtained by calling mallinfo.
 */
-DLMALLOC_EXTSPEC void  dlmalloc_stats(void);
+DLMALLOC_EXPORT void  dlmalloc_stats(void);
 
 #endif /* ONLY_MSPACES */
 
@@ -1284,16 +1254,7 @@ DLMALLOC_EXTSPEC void  dlmalloc_stats(void);
   p = malloc(n);
   assert(malloc_usable_size(p) >= 256);
 */
-DLMALLOC_EXTSPEC size_t dlmalloc_usable_size(void*);
-
-#if USE_OWNED_LOCKS
-/*
-  If compiled with USE_OWNED_LOCKS,
-  malloc_is_locked_by_current_thread() returns true if allocation
-  is currently locked by current thread. Otherwise returns 0.
-*/
-DLMALLOC_EXTSPEC int dlmalloc_is_locked_by_current_thread(void);
-#endif
+size_t dlmalloc_usable_size(void*);
 
 #if MSPACES
 
@@ -1314,7 +1275,7 @@ typedef void* mspace;
   compiling with a different DEFAULT_GRANULARITY or dynamically
   setting with mallopt(M_GRANULARITY, value).
 */
-DLMALLOC_EXTSPEC mspace create_mspace(size_t capacity, int locked);
+DLMALLOC_EXPORT mspace create_mspace(size_t capacity, int locked);
 
 /*
   destroy_mspace destroys the given space, and attempts to return all
@@ -1322,7 +1283,7 @@ DLMALLOC_EXTSPEC mspace create_mspace(size_t capacity, int locked);
   bytes freed. After destruction, the results of access to all memory
   used by the space become undefined.
 */
-DLMALLOC_EXTSPEC size_t destroy_mspace(mspace msp);
+DLMALLOC_EXPORT size_t destroy_mspace(mspace msp);
 
 /*
   create_mspace_with_base uses the memory supplied as the initial base
@@ -1333,7 +1294,7 @@ DLMALLOC_EXTSPEC size_t destroy_mspace(mspace msp);
   Destroying this space will deallocate all additionally allocated
   space (if possible) but not the initial base.
 */
-DLMALLOC_EXTSPEC mspace create_mspace_with_base(void* base, size_t capacity, int locked);
+DLMALLOC_EXPORT mspace create_mspace_with_base(void* base, size_t capacity, int locked);
 
 /*
   mspace_track_large_chunks controls whether requests for large chunks
@@ -1346,14 +1307,14 @@ DLMALLOC_EXTSPEC mspace create_mspace_with_base(void* base, size_t capacity, int
   allocated using this space.  The function returns the previous
   setting.
 */
-DLMALLOC_EXTSPEC int mspace_track_large_chunks(mspace msp, int enable);
+DLMALLOC_EXPORT int mspace_track_large_chunks(mspace msp, int enable);
 
 
 /*
   mspace_malloc behaves as malloc, but operates within
   the given space.
 */
-DLMALLOC_EXTSPEC void* mspace_malloc(mspace msp, size_t bytes);
+DLMALLOC_EXPORT void* mspace_malloc(mspace msp, size_t bytes);
 
 /*
   mspace_free behaves as free, but operates within
@@ -1363,7 +1324,7 @@ DLMALLOC_EXTSPEC void* mspace_malloc(mspace msp, size_t bytes);
   free may be called instead of mspace_free because freed chunks from
   any space are handled by their originating spaces.
 */
-DLMALLOC_EXTSPEC void mspace_free(mspace msp, void* mem);
+DLMALLOC_EXPORT void mspace_free(mspace msp, void* mem);
 
 /*
   mspace_realloc behaves as realloc, but operates within
@@ -1374,45 +1335,45 @@ DLMALLOC_EXTSPEC void mspace_free(mspace msp, void* mem);
   realloced chunks from any space are handled by their originating
   spaces.
 */
-DLMALLOC_EXTSPEC void* mspace_realloc(mspace msp, void* mem, size_t newsize);
+DLMALLOC_EXPORT void* mspace_realloc(mspace msp, void* mem, size_t newsize);
 
 /*
   mspace_calloc behaves as calloc, but operates within
   the given space.
 */
-DLMALLOC_EXTSPEC void* mspace_calloc(mspace msp, size_t n_elements, size_t elem_size);
+DLMALLOC_EXPORT void* mspace_calloc(mspace msp, size_t n_elements, size_t elem_size);
 
 /*
   mspace_memalign behaves as memalign, but operates within
   the given space.
 */
-DLMALLOC_EXTSPEC void* mspace_memalign(mspace msp, size_t alignment, size_t bytes);
+DLMALLOC_EXPORT void* mspace_memalign(mspace msp, size_t alignment, size_t bytes);
 
 /*
   mspace_independent_calloc behaves as independent_calloc, but
   operates within the given space.
 */
-DLMALLOC_EXTSPEC void** mspace_independent_calloc(mspace msp, size_t n_elements,
+DLMALLOC_EXPORT void** mspace_independent_calloc(mspace msp, size_t n_elements,
                                  size_t elem_size, void* chunks[]);
 
 /*
   mspace_independent_comalloc behaves as independent_comalloc, but
   operates within the given space.
 */
-DLMALLOC_EXTSPEC void** mspace_independent_comalloc(mspace msp, size_t n_elements,
+DLMALLOC_EXPORT void** mspace_independent_comalloc(mspace msp, size_t n_elements,
                                    size_t sizes[], void* chunks[]);
 
 /*
   mspace_footprint() returns the number of bytes obtained from the
   system for this space.
 */
-DLMALLOC_EXTSPEC size_t mspace_footprint(mspace msp);
+DLMALLOC_EXPORT size_t mspace_footprint(mspace msp);
 
 /*
   mspace_max_footprint() returns the peak number of bytes obtained from the
   system for this space.
 */
-DLMALLOC_EXTSPEC size_t mspace_max_footprint(mspace msp);
+DLMALLOC_EXPORT size_t mspace_max_footprint(mspace msp);
 
 
 #if !NO_MALLINFO
@@ -1420,40 +1381,30 @@ DLMALLOC_EXTSPEC size_t mspace_max_footprint(mspace msp);
   mspace_mallinfo behaves as mallinfo, but reports properties of
   the given space.
 */
-struct mallinfo mspace_mallinfo(mspace msp);
+DLMALLOC_EXPORT struct mallinfo mspace_mallinfo(mspace msp);
 #endif /* NO_MALLINFO */
 
 /*
   malloc_usable_size(void* p) behaves the same as malloc_usable_size;
 */
-DLMALLOC_EXTSPEC   size_t mspace_usable_size(void* mem);
+DLMALLOC_EXPORT size_t mspace_usable_size(void* mem);
 
 /*
   mspace_malloc_stats behaves as malloc_stats, but reports
   properties of the given space.
 */
-DLMALLOC_EXTSPEC void mspace_malloc_stats(mspace msp);
+DLMALLOC_EXPORT void mspace_malloc_stats(mspace msp);
 
 /*
   mspace_trim behaves as malloc_trim, but
   operates within the given space.
 */
-DLMALLOC_EXTSPEC int mspace_trim(mspace msp, size_t pad);
+DLMALLOC_EXPORT int mspace_trim(mspace msp, size_t pad);
 
 /*
   An alias for mallopt.
 */
-DLMALLOC_EXTSPEC int mspace_mallopt(int, int);
-
-#if USE_OWNED_LOCKS
-/*
-  If compiled with USE_OWNED_LOCKS,
-  mspace_is_locked_by_current_thread(mspace msp) returns true if the
-  given mspace is currently locked by current thread. Otherwise
-  returns 0.
-*/
-DLMALLOC_EXTSPEC int mspace_is_locked_by_current_thread(mspace msp);
-#endif /* USE_OWNED_LOCKS */
+DLMALLOC_EXPORT int mspace_mallopt(int, int);
 
 #endif /* MSPACES */
 
@@ -1535,13 +1486,14 @@ extern void*     sbrk(ptrdiff_t);
 /* Declarations for locking */
 #if USE_LOCKS
 #ifndef WIN32
-#ifndef LACKS_SCHED_H
-#include <sched.h>
-#endif
-#include <pthread.h>
 #if defined (__SVR4) && defined (__sun)  /* solaris */
 #include <thread.h>
-#endif /* solaris */
+#elif !defined(LACKS_SCHED_H)
+#include <sched.h>
+#endif /* solaris or LACKS_SCHED_H */
+#if (defined(USE_RECURSIVE_LOCKS) && USE_RECURSIVE_LOCKS != 0) || !USE_SPIN_LOCKS
+#include <pthread.h>
+#endif /* USE_RECURSIVE_LOCKS ... */
 #elif defined(_MSC_VER)
 #ifndef _M_AMD64
 /* These are already defined on AMD64 builds */
@@ -1742,7 +1694,6 @@ static FORCEINLINE int win32munmap(void* ptr, size_t size) {
 #endif /* WIN32 */
 #endif /* HAVE_MREMAP */
 
-
 /**
  * Define CALL_MORECORE
  */
@@ -1823,14 +1774,12 @@ static FORCEINLINE int win32munmap(void* ptr, size_t size) {
   cope the best we can on interference.
 
   Per-mspace locks surround calls to malloc, free, etc.
-  By default, locks are simple non-reentrant mutexes, but
-  can optionally track ownership if USE_OWNED_LOCKS is set.
+  By default, locks are simple non-reentrant mutexes.
 
   Because lock-protected regions generally have bounded times, it is
-  OK to use the supplied simple spinlocks in the custom versions for
-  x86. Spinlocks are likely to improve performance for lightly
-  contended applications, but worsen performance under heavy
-  contention.
+  OK to use the supplied simple spinlocks. Spinlocks are likely to
+  improve performance for lightly contended applications, but worsen
+  performance under heavy contention.
 
   If USE_LOCKS is > 1, the definitions of lock routines here are
   bypassed, in which case you will need to define the type MLOCK_T,
@@ -1840,70 +1789,47 @@ static FORCEINLINE int win32munmap(void* ptr, size_t size) {
 
 */
 
-#if USE_LOCKS == 1
-#if USE_SPIN_LOCKS && SPIN_LOCKS_AVAILABLE
+#if !USE_LOCKS
+#define USE_LOCK_BIT               (0U)
+#define INITIAL_LOCK(l)            (0)
+#define DESTROY_LOCK(l)            (0)
+#define ACQUIRE_MALLOC_GLOBAL_LOCK()
+#define RELEASE_MALLOC_GLOBAL_LOCK()
 
-/* All spin locks use single word (embedded in malloc_states) */
-#define MLOCK_T               int
-#define INITIAL_LOCK(sl)      (*sl = 0)
-#define DESTROY_LOCK(sl)      (0)
-static MLOCK_T malloc_global_mutex = 0;
-#define SPINS_PER_YIELD       63
+#else
+#if USE_LOCKS > 1
+/* -----------------------  User-defined locks ------------------------ */
+/* Define your own lock implementation here */
+/* #define INITIAL_LOCK(lk)  ... */
+/* #define DESTROY_LOCK(lk)  ... */
+/* #define ACQUIRE_LOCK(lk)  ... */
+/* #define RELEASE_LOCK(lk)  ... */
+/* #define TRY_LOCK(lk) ... */
+/* static MLOCK_T malloc_global_mutex = ... */
 
-#if USE_GCC_SPIN_LOCKS
-#define RELEASE_LOCK(sl)      __sync_lock_release(sl)
-#define TRY_LOCK(sl)          __sync_lock_test_and_set(sl, 1)
-#define ACQUIRE_LOCK(sl)      (__sync_lock_test_and_set(sl, 1)? spin_acquire_lock(sl) : 0)
+#elif USE_SPIN_LOCKS
 
-static int spin_acquire_lock(MLOCK_T *sl) {
-  int spins = 0;
-  for (;;) {
-    if (*sl == 0 && !__sync_lock_test_and_set(sl, 1)) {
-      return 0;
-    }
-    if ((++spins & SPINS_PER_YIELD) == 0) {
-#if defined (__SVR4) && defined (__sun) /* solaris */
-      thr_yield();
-#elif !defined(LACKS_SCHED_H)
-      sched_yield();
-#endif
-    }
-  }
-}
+/* First, define CAS_LOCK and CLEAR_LOCK on ints */
+/* Note CAS_LOCK defined to return 0 on success */
+
+#if defined(__GNUC__)&& (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 1))
+#define CAS_LOCK(sl)     __sync_lock_test_and_set(sl, 1)
+#define CLEAR_LOCK(sl)   __sync_lock_release(sl)
 
 #elif (defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__)))
 /* Custom spin locks for older gcc on x86 */
-#define ACQUIRE_LOCK(sl)      x86_acquire_lock(sl)
-#define RELEASE_LOCK(sl)      x86_release_lock(sl)
-#define TRY_LOCK(sl)          x86_try_lock(sl)
-
-static FORCEINLINE int x86_acquire_lock (MLOCK_T *sl) {
-  int spins = 0;
-  for (;;) {
-    if (spins == 0 || *sl == 0) {
-      /* place args to cmpxchgl in locals to evade oddities in some gccs */
-      int val = 1;
-      int cmp = 0;
-      int ret;
-      __asm__ __volatile__  ("lock; cmpxchgl %1, %2"
-                             : "=a" (ret)
-                             : "r" (val), "m" (*(sl)), "0"(cmp)
-                             : "memory", "cc");
-      if (!ret) {
-        return 0;
-      }
-    }
-    if ((++spins & SPINS_PER_YIELD) == 0) {
-#if defined (__SVR4) && defined (__sun) /* solaris */
-      thr_yield();
-#elif !defined(LACKS_SCHED_H)
-      sched_yield();
-#endif
-    }
-  }
+static FORCEINLINE int x86_cas_lock(int *sl) {
+  int ret;
+  int val = 1;
+  int cmp = 0;
+  __asm__ __volatile__  ("lock; cmpxchgl %1, %2"
+                         : "=a" (ret)
+                         : "r" (val), "m" (*(sl)), "0"(cmp)
+                         : "memory", "cc");
+  return ret;
 }
 
-static FORCEINLINE void x86_release_lock (MLOCK_T *sl) {
+static FORCEINLINE void x86_clear_lock(int* sl) {
   assert(*sl != 0);
   int prev = 0;
   int ret;
@@ -1913,72 +1839,132 @@ static FORCEINLINE void x86_release_lock (MLOCK_T *sl) {
                         : "memory");
 }
 
-static FORCEINLINE int x86_try_lock (MLOCK_T *sl) {
-  int ret;
-  int val = 1;
-  int cmp = 0;
-  __asm__ __volatile__  ("lock; cmpxchgl %1, %2"
-                         : "=a" (ret)
-                         : "r" (val), "m" (*(sl)), "0"(cmp)
-                         : "memory", "cc");
-  return !ret;
-}
+#define CAS_LOCK(sl)     x86_cas_lock(sl)
+#define CLEAR_LOCK(sl)   x86_clear_lock(sl)
 
-#elif (defined(_MSC_VER) && _MSC_VER>=1310)
-/* Custom win32-style spin locks on x86 and x64 for MSC */
-#define RELEASE_LOCK(sl)      interlockedexchange (sl, 0)
-#define TRY_LOCK(sl)          interlockedexchange(sl, 1)
-#define ACQUIRE_LOCK(sl)      (interlockedexchange(sl, 1) ? win32_spin_acquire(sl) : 0)
+#else /* Win32 MSC */
+#define CAS_LOCK(sl)     interlockedexchange(sl, 1)
+#define CLEAR_LOCK(sl)   interlockedexchange (sl, 0)
+
+#endif /* ... gcc spins locks ... */
+
+/* How to yield for a spin lock */
+#define SPINS_PER_YIELD       63
+#if defined(_MSC_VER)
 #define SLEEP_EX_DURATION     50 /* delay for yield/sleep */
-
-static int win32_spin_acquire(MLOCK_T *sl) {
-  int spins = 0;
-  for (;;) {
-    if (spins == 0 || *sl == 0) {
-      if (!interlockedexchange(sl, 1)) {
-        return 0;
-      }
-    }
-    if ((++spins & SPINS_PER_YIELD) == 0)
-      SleepEx(SLEEP_EX_DURATION, FALSE);
-  }
-}
-
-
+#define SPIN_LOCK_YIELD  SleepEx(SLEEP_EX_DURATION, FALSE)
+#elif defined (__SVR4) && defined (__sun) /* solaris */
+#define SPIN_LOCK_YIELD   thr_yield();
+#elif !defined(LACKS_SCHED_H)
+#define SPIN_LOCK_YIELD   sched_yield();
 #else
-#error "USE_SPIN_LOCKS set on machine without an implementation!"
-#endif /* USE_GCC_SPIN_LOCKS */
+#define SPIN_LOCK_YIELD
+#endif /* ... yield ... */
 
-#else /* USE_SPIN_LOCKS */
-
-#ifndef WIN32
-/* pthreads-based locks */
-
-#define MLOCK_T               pthread_mutex_t
-#define INITIAL_LOCK(sl)      pthread_init_lock(sl)
-#define DESTROY_LOCK(sl)      pthread_mutex_destroy(sl)
-#define ACQUIRE_LOCK(sl)      pthread_mutex_lock(sl)
-#define RELEASE_LOCK(sl)      pthread_mutex_unlock(sl)
-#define TRY_LOCK(sl)          (!pthread_mutex_trylock(sl))
-
-static MLOCK_T malloc_global_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static int pthread_init_lock (MLOCK_T *sl) {
-  pthread_mutexattr_t attr;
-  if (pthread_mutexattr_init(&attr)) return 1;
-  if (pthread_mutex_init(sl, &attr)) return 1;
-  if (pthread_mutexattr_destroy(&attr)) return 1;
+#if !defined(USE_RECURSIVE_LOCKS) || USE_RECURSIVE_LOCKS == 0
+/* Plain spin locks use single word (embedded in malloc_states) */
+static int spin_acquire_lock(int *sl) {
+  int spins = 0;
+  while (*(volatile int *)sl != 0 || CAS_LOCK(sl)) {
+    if ((++spins & SPINS_PER_YIELD) == 0) {
+      SPIN_LOCK_YIELD;
+    }
+  }
   return 0;
 }
 
-#else /* WIN32 */
-/* Win32 critical sections */
+#define MLOCK_T               int
+#define TRY_LOCK(sl)          !CAS_LOCK(sl)
+#define RELEASE_LOCK(sl)      CLEAR_LOCK(sl)
+#define ACQUIRE_LOCK(sl)      (CAS_LOCK(sl)? spin_acquire_lock(sl) : 0)
+#define INITIAL_LOCK(sl)      (*sl = 0)
+#define DESTROY_LOCK(sl)      (0)
+static MLOCK_T malloc_global_mutex = 0;
+
+#else /* USE_RECURSIVE_LOCKS */
+/* types for lock owners */
+#ifdef WIN32
+#define THREAD_ID_T           DWORD
+#define CURRENT_THREAD        GetCurrentThreadId()
+#define EQ_OWNER(X,Y)         ((X) == (Y))
+#else
+/*
+  Note: the following assume that pthread_t is a type that can be
+  initialized to (casted) zero. If this is not the case, you will need to
+  somehow redefine these or not use spin locks.
+*/
+#define THREAD_ID_T           pthread_t
+#define CURRENT_THREAD        pthread_self()
+#define EQ_OWNER(X,Y)         pthread_equal(X, Y)
+#endif
+
+struct malloc_recursive_lock {
+  int sl;
+  unsigned int c;
+  THREAD_ID_T threadid;
+};
+
+#define MLOCK_T  struct malloc_recursive_lock
+static MLOCK_T malloc_global_mutex = { 0, 0, (THREAD_ID_T)0};
+
+static FORCEINLINE void recursive_release_lock(MLOCK_T *lk) {
+  assert(lk->sl != 0);
+  if (--lk->c == 0) {
+    CLEAR_LOCK(&lk->sl);
+  }
+}
+
+static FORCEINLINE int recursive_acquire_lock(MLOCK_T *lk) {
+  THREAD_ID_T mythreadid = CURRENT_THREAD;
+  int spins = 0;
+  for (;;) {
+    if (*((volatile int *)(&lk->sl)) == 0) {
+      if (!CAS_LOCK(&lk->sl)) {
+        lk->threadid = mythreadid;
+        lk->c = 1;
+        return 0;
+      }
+    }
+    else if (EQ_OWNER(lk->threadid, mythreadid)) {
+      ++lk->c;
+      return 0;
+    }
+    if ((++spins & SPINS_PER_YIELD) == 0) {
+      SPIN_LOCK_YIELD;
+    }
+  }
+}
+
+static FORCEINLINE int recursive_try_lock(MLOCK_T *lk) {
+  THREAD_ID_T mythreadid = CURRENT_THREAD;
+  if (*((volatile int *)(&lk->sl)) == 0) {
+    if (!CAS_LOCK(&lk->sl)) {
+      lk->threadid = mythreadid;
+      lk->c = 1;
+      return 1;
+    }
+  }
+  else if (EQ_OWNER(lk->threadid, mythreadid)) {
+    ++lk->c;
+    return 1;
+  }
+  return 0;
+}
+
+#define RELEASE_LOCK(lk)      recursive_release_lock(lk)
+#define TRY_LOCK(lk)          recursive_try_lock(lk)
+#define ACQUIRE_LOCK(lk)      recursive_acquire_lock(lk)
+#define INITIAL_LOCK(lk)      ((lk)->threadid = (THREAD_ID_T)0, (lk)->sl = 0, (lk)->c = 0)
+#define DESTROY_LOCK(lk)      (0)
+#endif /* USE_RECURSIVE_LOCKS */
+
+#elif defined(WIN32) /* Win32 critical sections */
 #define MLOCK_T               CRITICAL_SECTION
-#define INITIAL_LOCK(sl)      (!InitializeCriticalSectionAndSpinCount((sl), 0x80000000|4000))
-#define DESTROY_LOCK(sl)      (DeleteCriticalSection(sl), 0)
-#define ACQUIRE_LOCK(sl)      (EnterCriticalSection(sl), 0)
-#define RELEASE_LOCK(sl)      LeaveCriticalSection(sl)
-#define TRY_LOCK(sl)          TryEnterCriticalSection(sl)
+#define ACQUIRE_LOCK(lk)      (EnterCriticalSection(lk), 0)
+#define RELEASE_LOCK(lk)      LeaveCriticalSection(lk)
+#define TRY_LOCK(lk)          TryEnterCriticalSection(lk)
+#define INITIAL_LOCK(lk)      (!InitializeCriticalSectionAndSpinCount((lk), 0x80000000|4000))
+#define DESTROY_LOCK(lk)      (DeleteCriticalSection(lk), 0)
 #define NEED_GLOBAL_LOCK_INIT
 
 static MLOCK_T malloc_global_mutex;
@@ -2001,49 +1987,39 @@ static void init_malloc_global_mutex() {
   }
 }
 
-#endif /* WIN32 */
-#endif /* USE_SPIN_LOCKS */
-#endif /* USE_LOCKS == 1 */
+#else /* pthreads-based locks */
+#define MLOCK_T               pthread_mutex_t
+#define ACQUIRE_LOCK(lk)      pthread_mutex_lock(lk)
+#define RELEASE_LOCK(lk)      pthread_mutex_unlock(lk)
+#define TRY_LOCK(lk)          (!pthread_mutex_trylock(lk))
+#define INITIAL_LOCK(lk)      pthread_init_lock(lk)
+#define DESTROY_LOCK(lk)      pthread_mutex_destroy(lk)
 
-/* -----------------------  User-defined locks ------------------------ */
+#if defined(USE_RECURSIVE_LOCKS) && USE_RECURSIVE_LOCKS != 0 && defined(linux) && !defined(PTHREAD_MUTEX_RECURSIVE)
+/* Cope with old-style linux recursive lock initialization by adding */
+/* skipped internal declaration from pthread.h */
+extern int pthread_mutexattr_setkind_np __P ((pthread_mutexattr_t *__attr,
+					   int __kind));
+#define PTHREAD_MUTEX_RECURSIVE PTHREAD_MUTEX_RECURSIVE_NP
+#define pthread_mutexattr_settype(x,y) pthread_mutexattr_setkind_np(x,y)
+#endif /* USE_RECURSIVE_LOCKS ... */
 
-#if USE_LOCKS > 1
-/* Define your own lock implementation here */
-/* #define INITIAL_LOCK(sl)  ... */
-/* #define DESTROY_LOCK(sl)  ... */
-/* #define ACQUIRE_LOCK(sl)  ... */
-/* #define RELEASE_LOCK(sl)  ... */
-/* #define TRY_LOCK(sl) ... */
-/* static MLOCK_T malloc_global_mutex = ... */
-#endif /* USE_LOCKS > 1 */
+static MLOCK_T malloc_global_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* ---------------------------  Owned locks ---------------------------- */
+static int pthread_init_lock (MLOCK_T *lk) {
+  pthread_mutexattr_t attr;
+  if (pthread_mutexattr_init(&attr)) return 1;
+#if defined(USE_RECURSIVE_LOCKS) && USE_RECURSIVE_LOCKS != 0
+  if (pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE)) return 1;
+#endif
+  if (pthread_mutex_init(lk, &attr)) return 1;
+  if (pthread_mutexattr_destroy(&attr)) return 1;
+  return 0;
+}
 
-#if USE_OWNED_LOCKS && USE_LOCKS && !defined(MSPACE_OWNER_TYPE)
-#ifdef WIN32
-#define MSPACE_OWNER_TYPE     DWORD
-#define CURRENT_THREAD        GetCurrentThreadId()
-#define UNOWNED               ((DWORD)0)
-#define EQ_OWNER(X,Y)         ((X) == (Y))
-#else
-/*
-  Note: Because there is no reasonable portable alternative, when spin
-  locks are not used, the following assume that pthread_t is a scalar
-  type and has a null UNOWNED value that can be set, neither of which
-  are guaranteed by specs. Attempts to compile on platforms for which
-  pthread_t is not a scalar should fail, in which case you will need
-  to somehow redefine these.
-*/
-#define MSPACE_OWNER_TYPE     pthread_t
-#define CURRENT_THREAD        pthread_self()
-#define UNOWNED               ((pthread_t)0)
-#define EQ_OWNER(X,Y)         pthread_equal(X, Y)
-#endif /* WIN32 */
-#endif /* USE_OWNED_LOCKS */
+#endif /* ... lock types ... */
 
-/* -----------------------  Lock-based state ------------------------ */
-
-#if USE_LOCKS
+/* Common code for all lock types */
 #define USE_LOCK_BIT               (2U)
 
 #ifndef ACQUIRE_MALLOC_GLOBAL_LOCK
@@ -2054,13 +2030,6 @@ static void init_malloc_global_mutex() {
 #define RELEASE_MALLOC_GLOBAL_LOCK()  RELEASE_LOCK(&malloc_global_mutex);
 #endif
 
-
-#else  /* USE_LOCKS */
-#define USE_LOCK_BIT               (0U)
-#define INITIAL_LOCK(l)            (0)
-#define DESTROY_LOCK(l)            (0)
-#define ACQUIRE_MALLOC_GLOBAL_LOCK()
-#define RELEASE_MALLOC_GLOBAL_LOCK()
 #endif /* USE_LOCKS */
 
 /* -----------------------  Chunk representations ------------------------ */
@@ -2614,9 +2583,6 @@ struct malloc_state {
   flag_t     mflags;
 #if USE_LOCKS
   MLOCK_T    mutex;     /* locate lock among fields that rarely change */
-#if USE_OWNED_LOCKS
-  MSPACE_OWNER_TYPE  owner;
-#endif /* USE_OWNED_LOCKS */
 #endif /* USE_LOCKS */
   msegment   seg;
   void*      extp;      /* Unused but available for extensions */
@@ -2762,34 +2728,8 @@ static int has_segment_link(mstate m, msegmentptr ss) {
 */
 
 #if USE_LOCKS
-
-#if USE_OWNED_LOCKS
-
-static FORCEINLINE int acquire_owned_lock (mstate m) {
-  if (use_lock(m)) {
-    ACQUIRE_LOCK(&m->mutex);
-    m->owner = CURRENT_THREAD;
-  }
-  return 0;
-}
-
-static FORCEINLINE void release_owned_lock (mstate m) {
-  if (use_lock(m)) {
-#if !USE_SPIN_LOCKS || !SPIN_LOCKS_AVAILABLE
-    m->owner = UNOWNED;
-#endif
-    RELEASE_LOCK(&m->mutex);
-  }
-}
-
-#define PREACTION(M)            acquire_owned_lock(M)
-#define POSTACTION(M)           release_owned_lock(M)
-#else
-
 #define PREACTION(M)  ((use_lock(M))? ACQUIRE_LOCK(&(M)->mutex) : 0)
 #define POSTACTION(M) { if (use_lock(M)) RELEASE_LOCK(&(M)->mutex); }
-
-#endif /* USE_OWNED_LOCKS */
 #else /* USE_LOCKS */
 
 #ifndef PREACTION
@@ -5425,16 +5365,6 @@ size_t dlmalloc_usable_size(void* mem) {
   return 0;
 }
 
-#if USE_OWNED_LOCKS
-int malloc_is_locked_by_current_thread(void) {
-#if USE_SPIN_LOCKS && SPIN_LOCKS_AVAILABLE
-  return gm->mutex != 0 && EQ_OWNER(gm->owner, CURRENT_THREAD);
-#else /* Cannot necessarily check lock state, so rely on clearing on release  */
-  return EQ_OWNER(gm->owner, CURRENT_THREAD);
-#endif /*USE_SPIN_LOCKS */
-}
-#endif /* USE_OWNED_LOCKS */
-
 #endif /* !ONLY_MSPACES */
 
 /* ----------------------------- user mspaces ---------------------------- */
@@ -6012,17 +5942,6 @@ int mspace_mallopt(int param_number, int value) {
   return change_mparam(param_number, value);
 }
 
-#if USE_OWNED_LOCKS
-int mspace_is_locked_by_current_thread(mspace msp) {
-  mstate ms = (mstate)msp;
-#if USE_SPIN_LOCKS && SPIN_LOCKS_AVAILABLE
-  return ms->mutex != 0 && EQ_OWNER(ms->owner, CURRENT_THREAD);
-#else /* Cannot necessarily check lock state, so rely on clearing on release  */
-  return EQ_OWNER(ms->owner, CURRENT_THREAD);
-#endif /*USE_SPIN_LOCKS */
-}
-#endif /* USE_OWNED_LOCKS */
-
 #endif /* MSPACES */
 
 
@@ -6128,8 +6047,7 @@ History:
       * Add footprint_limit, inspect_all, bulk_free. Thanks
         to Barry Hayes and others for the suggestions.
       * Internal refactorings to avoid calls while holding locks
-      * Use non-reentrant locks by default, but optionally supply
-        mspace_is_locked_by_current_thread. Thanks to Roland Mgrath
+      * Use non-reentrant locks by default. Thanks to Roland Mgrath
         for the suggestion.
       * Small fixes to mspace_destroy, reset_on_error.
       * Various configuration extensions/changes. Thanks

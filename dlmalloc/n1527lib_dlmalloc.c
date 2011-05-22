@@ -36,9 +36,9 @@ DEALINGS IN THE SOFTWARE.
 #if 1
 /* Temporary hacky stuff */
   #ifdef WIN32
-   #define DLMALLOC_EXTSPEC extern __declspec(dllexport)
+   #define DLMALLOC_EXPORT extern __declspec(dllexport)
   #elif defined(__GNUC__)
-   #define DLMALLOC_EXTSPEC extern __attribute__ ((visibility("default")))
+   #define DLMALLOC_EXPORT extern __attribute__ ((visibility("default")))
   #endif
 #endif
 #define ONLY_MSPACES 1

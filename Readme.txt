@@ -1,6 +1,6 @@
 C1X N1527 Proposal
 -=-=-=-=-=-=-=-=-=
-(C) 2010 Niall Douglas
+(C) 2010-2011 Niall Douglas
 
 http://www.nedproductions.biz/
 
@@ -8,6 +8,9 @@ http://www.nedproductions.biz/
 The files and data contained herein relate to the N1527 proposal (Latency Reducing Memory Allocation) for the C programming language.
 
 For more information see http://mallocv2.wordpress.com/
+
+
+There are TWO branches, master and ISO_TS_pre. master reflects N1527 as submitted to the March 2011 London meeting, whereas ISO_TS_pre reflects work done since the March 2011 meeting.
 
 
 Proposal/*: This contains the LaTeX files and Word files used to generate the proposal document.
