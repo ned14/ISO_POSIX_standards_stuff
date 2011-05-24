@@ -4,7 +4,7 @@
   http://creativecommons.org/publicdomain/zero/1.0/ Send questions,
   comments, complaints, performance data, etc to dl@cs.oswego.edu
 
-* Version pre-2.8.5 Sun May 22 10:26:02 2011  Doug Lea  (dl at gee)
+* Version 2.8.5 Sun May 22 10:26:02 2011  Doug Lea  (dl at gee)
 
    Note: There may be an updated version of this malloc obtainable at
            ftp://gee.cs.oswego.edu/pub/misc/malloc.c
@@ -3150,7 +3150,7 @@ static int init_mparams(void) {
 #ifdef WIN32
         magic = (size_t)(GetTickCount() ^ (size_t)0x55555555U);
 #elif defined(LACKS_TIME_H)
-        magic = (size_t)(&magic ^ (size_t)0x55555555U);
+      magic = (size_t)&magic ^ (size_t)0x55555555U;
 #else
         magic = (size_t)(time(0) ^ (size_t)0x55555555U);
 #endif
@@ -6039,7 +6039,7 @@ int mspace_mallopt(int param_number, int value) {
 
 /* -----------------------------------------------------------------------
 History:
-    v2.8.5
+    v2.8.5 Sun May 22 10:26:02 2011  Doug Lea  (dl at gee)
       * Always perform unlink checks unless INSECURE
       * Add posix_memalign.
       * Improve realloc to expand in more cases; expose realloc_in_place.
@@ -6047,7 +6047,7 @@ History:
       * Add footprint_limit, inspect_all, bulk_free. Thanks
         to Barry Hayes and others for the suggestions.
       * Internal refactorings to avoid calls while holding locks
-      * Use non-reentrant locks by default. Thanks to Roland Mgrath
+      * Use non-reentrant locks by default. Thanks to Roland McGrath
         for the suggestion.
       * Small fixes to mspace_destroy, reset_on_error.
       * Various configuration extensions/changes. Thanks
@@ -6249,5 +6249,4 @@ History:
          structure of old version,  but most details differ.)
 
 */
-
 
