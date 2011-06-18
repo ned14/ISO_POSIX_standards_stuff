@@ -59,11 +59,9 @@ DEALINGS IN THE SOFTWARE.
 #define RESTRICT
 #endif
 
-typedef unsigned char _Bool;
-
 
 /****************** Declare and define just those bits of stdatomic.h we need ***********************/
-typedef unsigned int atomic_uint;
+typedef ptrdiff_t atomic_ptrdiff_t;
 
 typedef enum memory_order
 {
@@ -75,7 +73,7 @@ typedef enum memory_order
   memory_order_seq_cst
 } memory_order;
 
-inline void atomic_init(volatile atomic_uint *o, unsigned int v)
+inline void atomic_init(volatile atomic_ptrdiff_t *o, size_t v)
 {
   /* Both MSVC and GCC do the right thing when it's marked volatile */
   *o=v;
@@ -102,73 +100,108 @@ permits subsequent operations to move upwards
     return;
   }
 }
-inline void atomic_store_explicit(volatile atomic_uint *o, unsigned int v, memory_order order)
+inline void atomic_store_explicit(volatile atomic_ptrdiff_t *o, ptrdiff_t v, memory_order order)
 {
-  switch(order)
-  {
-  default:
-    InterlockedExchange((volatile long *) o, (long) v);
-    return;
-  }
+  if(sizeof(ptrdiff_t)>4)
+    switch(order)
+    {
+    default:
+      InterlockedExchange64((volatile LONGLONG *) o, v);
+      return;
+    }
+  else
+    switch(order)
+    {
+    default:
+      InterlockedExchange((volatile long *) o, (long) v);
+      return;
+    }
 }
-inline unsigned int atomic_load_explicit(volatile atomic_uint *o, memory_order order)
+inline ptrdiff_t atomic_load_explicit(volatile atomic_ptrdiff_t *o, memory_order order)
 {
   /* Both MSVC and GCC do the right thing when it's marked volatile */
   return *o;
 }
-inline unsigned int atomic_exchange_explicit(volatile atomic_uint *o, unsigned int v, memory_order order)
+inline ptrdiff_t atomic_exchange_explicit(volatile atomic_ptrdiff_t *o, ptrdiff_t v, memory_order order)
 {
-  switch(order)
-  {
-#ifdef InterlockedExchangeAcquire
-  case memory_order_acquire:
-    return (unsigned int) InterlockedExchangeAcquire((volatile long *) o, v);
-  case memory_order_release:
-    return (unsigned int) InterlockedExchangeRelease((volatile long *) o, v);
+  if(sizeof(ptrdiff_t)>4)
+    switch(order)
+    {
+#ifdef InterlockedExchange64Acquire
+    case memory_order_acquire:
+      return InterlockedExchange64Acquire(o, v);
+    case memory_order_release:
+      return InterlockedExchange64Release(o, v);
 #endif
-  default:
-    return (unsigned int) InterlockedExchange((volatile long *) o, (long) v);
-  }
-}
-inline unsigned int atomic_compare_exchange_weak_explicit(volatile atomic_uint *o, unsigned int *expected, unsigned int v, memory_order success, memory_order failure)
-{
-  unsigned int former, e=*expected;
-  switch(success)
-  {
+    default:
+      return (ptrdiff_t) InterlockedExchange64((volatile LONGLONG *) o, v);
+    }
+  else
+    switch(order)
+    {
 #ifdef InterlockedExchangeAcquire
-  case memory_order_acquire:
-    former=(unsigned int) InterlockedCompareExchangeAcquire((volatile long *) o, (long) v, (long) e);
-    break;
-  case memory_order_release:
-    former=(unsigned int) InterlockedCompareExchangeRelease((volatile long *) o, (long) v, (long) e);
-    break;
+    case memory_order_acquire:
+      return InterlockedExchangeAcquire(o, v);
+    case memory_order_release:
+      return InterlockedExchangeRelease(o, v);
 #endif
-  default:
-    former=(unsigned int) InterlockedCompareExchange((volatile long *) o, (long) v, (long) e);
-    break;
-  }
-  if(former==e) return 1;
-  atomic_store_explicit(expected, former, failure);
-  return 0;
+    default:
+      return (ptrdiff_t) InterlockedExchange((volatile long *) o, (long) v);
+    }
 }
-inline unsigned int atomic_compare_exchange_strong_explicit(volatile atomic_uint *o, unsigned int *expected, unsigned int v, memory_order success, memory_order failure)
+inline ptrdiff_t atomic_fetch_add_explicit(volatile atomic_ptrdiff_t *o, ptrdiff_t v, memory_order order)
 {
-  /* No difference to weak when using Interlocked* functions */
-  return atomic_compare_exchange_weak_explicit(o, expected, v, success, failure);
-}
-inline unsigned int atomic_fetch_add_explicit(volatile atomic_uint *o, unsigned int v, memory_order order)
-{
-  switch(order)
-  {
+  if(sizeof(ptrdiff_t)>4)
+    switch(order)
+    {
+#ifdef InterlockedExchangeAdd64Acquire
+    case memory_order_acquire:
+      return InterlockedExchangeAdd64Acquire(o, v);
+    case memory_order_release:
+      return InterlockedExchangeAdd64Release(o, v);
+#endif
+    default:
+      return (ptrdiff_t) InterlockedExchangeAdd64((volatile LONGLONG *) o, v);
+    }
+  else
+    switch(order)
+    {
 #ifdef InterlockedExchangeAddAcquire
-  case memory_order_acquire:
-    return (unsigned int) InterlockedExchangeAddAcquire((volatile long *) o, v);
-  case memory_order_release:
-    return (unsigned int) InterlockedExchangeAddRelease((volatile long *) o, v);
+    case memory_order_acquire:
+      return InterlockedExchangeAddAcquire(o, v);
+    case memory_order_release:
+      return InterlockedExchangeAddRelease(o, v);
 #endif
-  default:
-    return (unsigned int) InterlockedExchangeAdd((volatile long *) o, (long) v);
-  }
+    default:
+      return (ptrdiff_t) InterlockedExchangeAdd((volatile long *) o, (long) v);
+    }
+}
+inline ptrdiff_t atomic_fetch_or_explicit(volatile atomic_ptrdiff_t *o, ptrdiff_t v, memory_order order)
+{
+  if(sizeof(ptrdiff_t)>4)
+    switch(order)
+    {
+#ifdef InterlockedOr64Acquire
+    case memory_order_acquire:
+      return InterlockedOr64Acquire((volatile LONGLONG *) o, v);
+    case memory_order_release:
+      return InterlockedOr64Release((volatile LONGLONG *) o, v);
+#endif
+    default:
+      return (ptrdiff_t) InterlockedOr64((volatile LONGLONG *) o, v);
+    }
+  else
+    switch(order)
+    {
+#ifdef InterlockedOrAcquire
+    case memory_order_acquire:
+      return InterlockedOrAcquire((volatile long *) o, (long) v);
+    case memory_order_release:
+      return InterlockedOrRelease((volatile long *) o, (long) v);
+#endif
+    default:
+      return (ptrdiff_t) InterlockedOr((volatile long *) o, (long) v);
+    }
 }
 #endif
 #ifdef __GNUC__
@@ -238,10 +271,6 @@ inline int thrd_sleep(const struct timespec *duration, const struct timespec *re
 {
   Sleep((DWORD)(duration->tv_sec*1000+duration->tv_nsec/1000000));
   return thrd_success;
-}
-inline void thrd_yield(void)
-{
-  Sleep(0);
 }
 #endif
 
