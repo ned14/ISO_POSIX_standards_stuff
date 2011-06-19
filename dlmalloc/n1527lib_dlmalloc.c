@@ -77,7 +77,12 @@ static struct mpool_APIset dlmalloc_apiset = {
   _ownerpool,
 };
 
-struct mpool_APIset default_allocator_APIset(void)
+#ifdef _MSC_VER
+__declspec(dllexport)
+#else
+__attribute__ ((visibility("default")))
+#endif
+struct mpool_APIset dlmalloc_allocator_APIset(void)
 {
   return dlmalloc_apiset;
 }
@@ -110,7 +115,7 @@ mpool createpool(struct mpool_attribute_data **RESTRICT attributes)
       {
         switch((*attributes)->id)
         {
-        case MPOOL_ATTRIBUTE_ZEROMEMORY:
+        case MPOOL_ATTRIBUTE_DESTROYUNUSED:
           {
             m->flags|=MPOOL_ZERO_MEMORY|MPOOL_ZERO_FREES;
             break;

@@ -145,7 +145,6 @@
     <ClInclude Include="malloc.c.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\n1527lib.c" />
     <ClCompile Include="n1527lib_dlmalloc.c" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

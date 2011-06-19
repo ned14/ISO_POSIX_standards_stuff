@@ -114,10 +114,10 @@ the DLL.
 #ifndef MPOOL_FLAGS_DEFINED
 #define MPOOL_FLAGS_DEFINED
 
-#define MPOOL_ZERO_MEMORY          (1<<0)
-#define MPOOL_ZERO_FREES           (1<<1)
-#define MPOOL_PREVENT_MOVE         (1<<2)
-#define MPOOL_FREE_NOW             (1<<3)
+#define MPOOL_ZERO_MEMORY          (1<<0)       //!< Zero fill allocated memory
+#define MPOOL_ZERO_FREES           (1<<1)       //!< Zero fill deallocated memory
+#define MPOOL_PREVENT_MOVE         (1<<2)       //!< Prevents a reallocation relocating the block
+#define MPOOL_FREE_NOW             (1<<3)       //!< Inhibits delayed freeing of this particular block
 
 #define MPOOL_USERFLAGS_FIRST      (1<<16)
 #define MPOOL_USERFLAGS_LAST       (1<<31)
@@ -139,7 +139,7 @@ typedef struct mpool_s *mpool;
 */
 enum mpool_attribute {
   MPOOL_ATTRIBUTE_NULL,               //!< This attribute will be ignored
-  MPOOL_ATTRIBUTE_ZEROMEMORY,         //!< Sets always zero unused memory for this memory pool. See struct mpool_attribute_zeromemory
+  MPOOL_ATTRIBUTE_DESTROYUNUSED,      //!< Sets always destroy unused memory for this memory pool. See struct mpool_attribute_destroyunused
   MPOOL_ATTRIBUTE_ALIGNMENT,          //!< Sets alignment for this memory pool. See struct mpool_attribute_alignment
   MPOOL_ATTRIBUTE_SIZEROUNDING,       //!< Sets size rounding for this memory pool. See struct mpool_attribute_sizerounding
   MPOOL_ATTRIBUTE_INSTALL_ALLOCATOR,  //!< Installs a new allocator
@@ -158,9 +158,10 @@ struct mpool_attribute_data {
   size_t length;                            //!< Typically sizeof(type), but may be shorter if we don't want to compare the whole structure
   int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
 };
-/*! \brief Sets that all memory in a memory pool is zeroed as soon as it becomes unused */
-struct mpool_attribute_zeromemory {
-  int id;                                   //!< Set to MPOOL_ATTRIBUTE_ZEROMEMORY
+/*! \brief Sets that all memory in a memory pool is destroyed (e.g. zeroed) as soon as it becomes unused. Useful for when
+storing encryption keys etc. Also implies that any newly allocated memory will always be zero filled. */
+struct mpool_attribute_destroyunused {
+  int id;                                   //!< Set to MPOOL_ATTRIBUTE_DESTROYUNUSED
   size_t length;                            //!< sizeof(type)
   int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
 };
@@ -180,9 +181,9 @@ struct mpool_attribute_sizerounding {
 };
 /*! \brief Defines an allocator API set */
 struct mpool_APIset {
-  const struct mpool_attribute_data **attributes;                           //!< Attribute set to match
-  mpool (*createpool)(struct mpool_attribute_data **RESTRICT attributes);   //!< Creates a pool
-  void (*destroypool)(mpool pool);                                          //!< Destroys a pool
+  int (*rateattributes)(const struct mpool_attribute_data **RESTRICT attributes); //!< Scores a set of attributes. Higher is better.
+  mpool (*createpool)(struct mpool_attribute_data **RESTRICT attributes);         //!< Creates a pool
+  void (*destroypool)(mpool pool);                                                //!< Destroys a pool
   void **(*batch)(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
   void *(*calloc)(mpool pool, size_t nmemb, size_t size);
   void (*free)(mpool pool, void *ptr);
@@ -194,8 +195,8 @@ struct mpool_APIset {
 };
 #endif
 
-/*! \brief Obtains a desired memory pool */
-N1527MALLOCEXTSPEC mpool mpool_obtain(struct mpool_attribute_data **RESTRICT attributes);
+/*! \brief Obtains a desired memory pool. Make SURE attributes is statically declared! */
+N1527MALLOCEXTSPEC mpool mpool_obtain(struct mpool_attribute_data **attributes);
 /*! \brief Destroys a memory pool */
 N1527MALLOCEXTSPEC void mpool_release(mpool pool);
 /*! \brief Returns all known memory pools */
@@ -209,7 +210,23 @@ struct mpool_s_ {
   struct mpool_APIset *APIset;
 };
 
-/*! \brief Performs a sequence of allocations, resizes and deallocations */
+/*! \brief Performs a sequence of allocations, or resizes, or deallocations.
+
+Allocations are when sizes and sizes[] is non-zero, but ptrs or ptrs[] is zero.
+Resizes are when both ptrs[] and sizes[] are non-zero. Deallocations are when
+ptrs[] is non-zero but sizes is zero. Note that you cannot mix operations,
+so either you are allocating, or deallocating, or resizing - this lets the allocator
+use highly optimised implementations.
+
+You should ALWAYS check that *count on exit is the same as it was on entry. If it
+is different then one or more of the individual operations failed. You can find out
+which and its cause by specifying an errnos array on entry.
+
+Returns whatever ptrs was on entry, though a zero ptrs on entry has a special case.
+Some allocators don't support a zero ptrs parameter and will always return
+zero, but for those which do support a zero ptrs parameter it will allocate a suitably
+sized array of pointers and return it from the function - in this case you must separately
+free the pointers array. */
 inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **mpool_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags)
 {
   struct mpool_s_ *p=(struct mpool_s_ *) pool;
@@ -296,9 +313,6 @@ inline N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *try_realloc(void *ptr, si
   return mpool_try_realloc(mpool_obtain(0), ptr, size);
 }
 #endif
-
-/*! \brief This is an internal bootstrapping function */
-extern struct mpool_APIset default_allocator_APIset(void);
 
 #if defined(__cplusplus)
 }

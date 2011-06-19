@@ -141,9 +141,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\n1527lib.c" />
     <ClCompile Include="..\n1527lib_test.c" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\kernelpage\kernelpage.vcxproj">
+      <Project>{2554ea40-a28a-c0cd-fd49-2e04a4474996}</Project>
+    </ProjectReference>
     <ProjectReference Include="N1527_dlmalloc.vcxproj">
       <Project>{01d80938-9908-4008-9b5e-5d03ef12cf2b}</Project>
     </ProjectReference>
