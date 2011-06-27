@@ -40,6 +40,7 @@ typedef struct permit_s
   atomic_uint permit;                 /* =0 no permit, =1 yes permit */
   atomic_uint waiters, waited;        /* Keeps track of when a thread waits and wakes */
   cnd_t cond;                         /* Wakes anything waiting for a permit */
+  atomic_uint lockWake;               /* Used to exclude new wakers if and only if waiters don't consume */
 } permit_t;
 
 /* Creates with whether waiters don't consume and initial state. */
@@ -70,6 +71,7 @@ inline int permit_init(permit_t *permit, _Bool waitersDontConsume, _Bool initial
   permit->permit=initial;
   permit->waiters=permit->waited=0;
   if(thrd_success!=cnd_init(&permit->cond)) return thrd_error;
+  permit->lockWake=0;
   return thrd_success;
 }
 
@@ -81,7 +83,17 @@ inline void permit_destroy(permit_t *permit)
 }
 
 inline int permit_grant(permit_t *permit)
-{ // Grant permit
+{ // If permits aren't consumed, prevent any new waiters or granters
+  int ret=thrd_success;
+  if(permit->replacePermit)
+  {
+    unsigned expected;
+    while((expected=0, !atomic_compare_exchange_weak_explicit(&permit->lockWake, &expected, 1, memory_order_relaxed, memory_order_relaxed)))
+    {
+      //if(1==cpus) thrd_yield();
+    }
+  }
+  // Grant permit
   atomic_store_explicit(&permit->permit, 1, memory_order_seq_cst);
   // Are there waiters on the permit?
   if(atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed))
@@ -90,20 +102,32 @@ inline int permit_grant(permit_t *permit)
     { // Loop waking until nothing is waiting
       do
       {
-        if(thrd_success!=cnd_broadcast(&permit->cond)) return thrd_error;
-        thrd_yield();
+        if(thrd_success!=cnd_broadcast(&permit->cond))
+        {
+          ret=thrd_error;
+          goto exit;
+        }
+        //if(1==cpus) thrd_yield();
       } while(atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed));
     }
     else
     { // Loop waking until at least one thread takes the permit
       while(atomic_load_explicit(&permit->permit, memory_order_relaxed))
       {
-        if(thrd_success!=cnd_signal(&permit->cond)) return thrd_error;
-        thrd_yield();
+        if(thrd_success!=cnd_signal(&permit->cond))
+        {
+          ret=thrd_error;
+          goto exit;
+        }
+        //if(1==cpus) thrd_yield();
       }
     }
   }
-  return thrd_success;
+exit:
+  // If permits aren't consumed, granting has completed, so permit new waiters and granters
+  if(permit->replacePermit)
+    permit->lockWake=0;
+  return ret;
 }
 
 inline void permit_revoke(permit_t *permit)
@@ -113,7 +137,16 @@ inline void permit_revoke(permit_t *permit)
 
 inline int permit_wait(permit_t *permit, mtx_t *mtx)
 {
-  int expected, ret=thrd_success;
+  int ret=thrd_success;
+  unsigned expected;
+  // If permits aren't consumed, if a permit is executing then wait here
+  if(permit->replacePermit)
+  {
+    while(atomic_load_explicit(&permit->lockWake, memory_order_acquire))
+    {
+      //if(1==cpus) thrd_yield();
+    }
+  }
   // Increment the monotonic count to indicate we have entered a wait
   atomic_fetch_add_explicit(&permit->waiters, 1, memory_order_acquire);
   // Fetch me a permit, excluding all other threads if replacePermit is zero

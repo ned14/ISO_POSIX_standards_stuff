@@ -5,13 +5,26 @@ Tests the proposed C1X permit object
 
 On a 2.67Ghz Intel Core 2 Quad:
 
-Uncontended grant time: 55 cycles
-Uncontended revoke time: 44 cycles
-Uncontended wait time: 134 cycles
+DoConsume:
 
-1 contended grant time: 1669 cycles
-1 contended revoke time: 61 cycles
-1 contended wait time: 469 cycles
+Uncontended grant time: 61 cycles
+Uncontended revoke time: 45 cycles
+Uncontended wait time: 135 cycles
+
+1 contended grant time: 731 cycles
+1 contended revoke time: 160 cycles
+1 contended wait time: 1195 cycles
+
+
+DontConsume:
+
+Uncontended grant time: 102 cycles
+Uncontended revoke time: 46 cycles
+Uncontended wait time: 137 cycles
+
+1 contended grant time: 856 cycles
+1 contended revoke time: 207 cycles
+1 contended wait time: 887 cycles
 */
 
 #include "c1x_notifier.h"
@@ -20,6 +33,9 @@ Uncontended wait time: 134 cycles
 
 #define THREADS 2
 #define CYCLESPERMICROSECOND (2.67*1000000000/1000000000000)
+#define DONTCONSUME 1
+// Define to test uncontended, set to what to exclude
+#define UNCONTENDED 0
 
 static usCount timingoverhead;
 static thrd_t threads[THREADS];
@@ -39,7 +55,9 @@ int threadfunc(void *mynum)
   size_t mythread=(size_t) mynum;
   usCount start, end;
   size_t count=0;
-  //if(mythread!=0) return 0;
+#ifdef UNCONTENDED
+  if(UNCONTENDED==mythread) return 0;
+#endif
   if(!mynum)
   {
     usCount revoketotal=0, granttotal=0;
@@ -61,6 +79,7 @@ int threadfunc(void *mynum)
       count++;
     }
     printf("Thread %u, average revoke/grant time was %u/%u cycles\n", mythread, (size_t)((double)revoketotal/count*CYCLESPERMICROSECOND), (size_t)((double)granttotal/count*CYCLESPERMICROSECOND));
+    permit_grant(&permit);
   }
   else
   {
@@ -77,6 +96,12 @@ int threadfunc(void *mynum)
       waittotal+=end-start-timingoverhead;
       count++;
       //printf("%u", mythread);
+#if defined(UNCONTENDED) && 0==DONTCONSUME
+      if(UNCONTENDED==0 && 1==mythread)
+      {
+        permit_grant(&permit);
+      }
+#endif
     }
     printf("Thread %u, average wait time was %u cycles\n", mythread, (size_t)((double)waittotal/count*CYCLESPERMICROSECOND));
   }
@@ -87,7 +112,7 @@ int main(void)
 {
   int n;
   usCount start;
-  permit_init(&permit, 1, 1);
+  permit_init(&permit, DONTCONSUME, 1);
   printf("Press key to continue ...\n");
   getchar();
   printf("Wait ...\n");
