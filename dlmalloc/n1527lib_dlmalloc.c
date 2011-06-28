@@ -42,7 +42,16 @@ DEALINGS IN THE SOFTWARE.
   #endif
 #endif
 #define ONLY_MSPACES 1
-/*#define DEBUG 1*/
+#define HAVE_MREMAP 1
+static void* kernel_mmap(void *kad, size_t size);
+static void* kernel_direct_mmap(void *kad, size_t size);
+static int kernel_munmap(void *kad, void* ptr, size_t size);
+static void* kernel_mremap(void *kad, void* ptr, size_t oldsize, size_t newsize, int flags);
+#define MMAP(kernelallocatordata, s) kernel_mmap((kernelallocatordata), (s))
+#define MUNMAP(kernelallocatordata, a, s) kernel_munmap((kernelallocatordata), (a), (s))
+#define DIRECT_MMAP(kernelallocatordata, s) kernel_direct_mmap((kernelallocatordata), (s))
+#define MREMAP(kernelallocatordata, addr, osz, nsz, mv) kernel_mremap((kernelallocatordata), (addr), (osz), (nsz), (mv))
+#define DEBUG 1
 #include "malloc.c.h"
 
 struct mpool_s {
@@ -52,8 +61,17 @@ struct mpool_s {
   size_t alignment;
   size_t sizerounding;
 };
+static size_t dlmalloc_alignments[]={
+  MALLOC_ALIGNMENT,
+  0
+};
+static size_t dlmalloc_roundings[]={
+  MALLOC_ALIGNMENT,
+  0
+};
 
-static mpool createpool(struct mpool_attribute_data **RESTRICT attributes);
+static int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes);
+static mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool);
 static void destroypool(mpool pool);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_calloc(mpool pool, size_t nmemb, size_t size);
@@ -64,7 +82,7 @@ static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_try_realloc(mpool pool, 
 static size_t _usable_size(mpool pool, void *ptr);
 static mpool _ownerpool(void *ptr);
 static struct mpool_APIset dlmalloc_apiset = {
-  NULL,
+  rateattributes,
   createpool,
   destroypool,
   _batch,
@@ -95,12 +113,71 @@ N1527MALLOCEXTSPEC mspace get_dlmalloc_mspace(mpool pool)
 }
 #endif
 
-mpool createpool(struct mpool_attribute_data **RESTRICT attributes)
+void* kernel_mmap(void *kad, size_t size)
+{
+  void *ret;
+  mpool kp=(mpool) kad;
+  ret=mpool_malloc(kp, size);
+  assert(ret);
+  return !ret ? MFAIL : ret;
+}
+void* kernel_direct_mmap(void *kad, size_t size)
+{
+  mpool kp=(mpool) kad;
+  void *ret=0;
+  size_t count=1;
+  mpool_batch(kp, NULL, &ret, &size, &count, MPOOL_HIGH_ADDR);
+  assert(count);
+  return !count ? MFAIL : ret;
+}
+int kernel_munmap(void *kad, void* ptr, size_t size)
+{
+  mpool kp=(mpool) kad;
+  mpool_free(kp, ptr);
+  return 0;
+}
+void* kernel_mremap(void *kad, void* ptr, size_t oldsize, size_t newsize, int flags)
+{
+  mpool kp=(mpool) kad;
+  size_t count=1;
+  mpool_batch(kp, NULL, &ptr, &newsize, &count, (flags & 1 /* MREMAP_MAYMOVE */) ? MPOOL_PREVENT_MOVE : 0);
+  assert(count);
+  return !count ? MFAIL : ptr;
+}
+
+
+
+int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes)
+{
+  ensure_initialization();
+  if(alignments) *alignments=dlmalloc_alignments;
+  if(roundings) *roundings=dlmalloc_roundings;
+  /* We're a general purpose allocator, so we are neither favoured nor disfavoured towards any attributes.
+  If a different general purpose allocator wanted to replace us it would simply return 1. */
+  return 0;
+}
+
+mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool)
 {
   mspace ms;
   struct mpool_s *m;
-  ensure_initialization();
-  if((ms=create_mspace(0, 1)))
+  if(attributes)
+  {
+    struct mpool_attribute_data **RESTRICT _attributes=attributes;
+    for(; *_attributes; _attributes++)
+    {
+      switch((*_attributes)->id)
+      {
+      case MPOOL_ATTRIBUTE_USESYSTEMPOOL:
+        {
+          struct mpool_attribute_usesystempool *a=(struct mpool_attribute_usesystempool *) *_attributes;
+          systempool=a->systempool;
+          break;
+        }
+      }
+    }
+  }
+  if((ms=create_mspace(0, 1, systempool)))
   {
     if(!(m=(struct mpool_s *) mspace_calloc(ms, 1, sizeof(struct mpool_s))))
     {
@@ -130,6 +207,11 @@ mpool createpool(struct mpool_attribute_data **RESTRICT attributes)
           {
             struct mpool_attribute_sizerounding *a=(struct mpool_attribute_sizerounding *) *attributes;
             m->sizerounding=a->rounding;
+            break;
+          }
+        case MPOOL_ATTRIBUTE_USESYSTEMPOOL:
+          {
+            struct mpool_attribute_usesystempool *a=(struct mpool_attribute_usesystempool *) *attributes;
             break;
           }
         default:
