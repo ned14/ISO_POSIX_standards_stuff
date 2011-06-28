@@ -1275,7 +1275,7 @@ typedef void* mspace;
   compiling with a different DEFAULT_GRANULARITY or dynamically
   setting with mallopt(M_GRANULARITY, value).
 */
-DLMALLOC_EXPORT mspace create_mspace(size_t capacity, int locked);
+DLMALLOC_EXPORT mspace create_mspace(size_t capacity, int locked, void *kernelallocatordata);
 
 /*
   destroy_mspace destroys the given space, and attempts to return all
@@ -1294,7 +1294,7 @@ DLMALLOC_EXPORT size_t destroy_mspace(mspace msp);
   Destroying this space will deallocate all additionally allocated
   space (if possible) but not the initial base.
 */
-DLMALLOC_EXPORT mspace create_mspace_with_base(void* base, size_t capacity, int locked);
+DLMALLOC_EXPORT mspace create_mspace_with_base(void* base, size_t capacity, int locked, void *kernelallocatordata);
 
 /*
   mspace_track_large_chunks controls whether requests for large chunks
@@ -1699,44 +1699,44 @@ static FORCEINLINE int win32munmap(void* ptr, size_t size) {
  */
 #if HAVE_MORECORE
     #ifdef MORECORE
-        #define CALL_MORECORE(S)    MORECORE(S)
+        #define CALL_MORECORE(kernelallocatordata, S)    MORECORE(S)
     #else  /* MORECORE */
-        #define CALL_MORECORE(S)    MORECORE_DEFAULT(S)
+        #define CALL_MORECORE(kernelallocatordata, S)    MORECORE_DEFAULT(S)
     #endif /* MORECORE */
 #else  /* HAVE_MORECORE */
-    #define CALL_MORECORE(S)        MFAIL
+    #define CALL_MORECORE(kernelallocatordata, S)        MFAIL
 #endif /* HAVE_MORECORE */
 
 /**
  * Define CALL_MMAP/CALL_MUNMAP/CALL_DIRECT_MMAP
  */
 #if HAVE_MMAP
-    #define USE_MMAP_BIT            (SIZE_T_ONE)
+    #define USE_MMAP_BIT                                 (SIZE_T_ONE)
 
     #ifdef MMAP
-        #define CALL_MMAP(s)        MMAP(s)
+        #define CALL_MMAP(kernelallocatordata, s)        MMAP((kernelallocatordata), (s))
     #else /* MMAP */
-        #define CALL_MMAP(s)        MMAP_DEFAULT(s)
+        #define CALL_MMAP(kernelallocatordata, s)        MMAP_DEFAULT(s)
     #endif /* MMAP */
     #ifdef MUNMAP
-        #define CALL_MUNMAP(a, s)   MUNMAP((a), (s))
+        #define CALL_MUNMAP(kernelallocatordata, a, s)   MUNMAP((kernelallocatordata), (a), (s))
     #else /* MUNMAP */
-        #define CALL_MUNMAP(a, s)   MUNMAP_DEFAULT((a), (s))
+        #define CALL_MUNMAP(kernelallocatordata, a, s)   MUNMAP_DEFAULT((a), (s))
     #endif /* MUNMAP */
     #ifdef DIRECT_MMAP
-        #define CALL_DIRECT_MMAP(s) DIRECT_MMAP(s)
+        #define CALL_DIRECT_MMAP(kernelallocatordata, s) DIRECT_MMAP((kernelallocatordata), (s))
     #else /* DIRECT_MMAP */
-        #define CALL_DIRECT_MMAP(s) DIRECT_MMAP_DEFAULT(s)
+        #define CALL_DIRECT_MMAP(kernelallocatordata, s) DIRECT_MMAP_DEFAULT(s)
     #endif /* DIRECT_MMAP */
 #else  /* HAVE_MMAP */
-    #define USE_MMAP_BIT            (SIZE_T_ZERO)
+    #define USE_MMAP_BIT                                 (SIZE_T_ZERO)
 
-    #define MMAP(s)                 MFAIL
-    #define MUNMAP(a, s)            (-1)
-    #define DIRECT_MMAP(s)          MFAIL
-    #define CALL_DIRECT_MMAP(s)     DIRECT_MMAP(s)
-    #define CALL_MMAP(s)            MMAP(s)
-    #define CALL_MUNMAP(a, s)       MUNMAP((a), (s))
+    #define MMAP(s)                                      MFAIL
+    #define MUNMAP(a, s)                                 (-1)
+    #define DIRECT_MMAP(s)                               MFAIL
+    #define CALL_DIRECT_MMAP(kernelallocatordata, s)     DIRECT_MMAP(s)
+    #define CALL_MMAP(kernelallocatordata, s)            MMAP(s)
+    #define CALL_MUNMAP(kernelallocatordata, a, s)       MUNMAP((a), (s))
 #endif /* HAVE_MMAP */
 
 /**
@@ -1744,12 +1744,12 @@ static FORCEINLINE int win32munmap(void* ptr, size_t size) {
  */
 #if HAVE_MMAP && HAVE_MREMAP
     #ifdef MREMAP
-        #define CALL_MREMAP(addr, osz, nsz, mv) MREMAP((addr), (osz), (nsz), (mv))
+        #define CALL_MREMAP(kernelallocatordata, addr, osz, nsz, mv) MREMAP((kernelallocatordata), (addr), (osz), (nsz), (mv))
     #else /* MREMAP */
-        #define CALL_MREMAP(addr, osz, nsz, mv) MREMAP_DEFAULT((addr), (osz), (nsz), (mv))
+        #define CALL_MREMAP(kernelallocatordata, addr, osz, nsz, mv) MREMAP_DEFAULT((addr), (osz), (nsz), (mv))
     #endif /* MREMAP */
 #else  /* HAVE_MMAP && HAVE_MREMAP */
-    #define CALL_MREMAP(addr, osz, nsz, mv)     MFAIL
+    #define CALL_MREMAP(kernelallocatordata, addr, osz, nsz, mv)     MFAIL
 #endif /* HAVE_MMAP && HAVE_MREMAP */
 
 /* mstate bit set if continguous morecore disabled or failed */
@@ -2585,6 +2585,7 @@ struct malloc_state {
   MLOCK_T    mutex;     /* locate lock among fields that rarely change */
 #endif /* USE_LOCKS */
   msegment   seg;
+  void*      kernelallocatordata; /* Unused but available for CALL_MMAP() replacements */
   void*      extp;      /* Unused but available for extensions */
   size_t     exts;
 };
@@ -3808,7 +3809,7 @@ static void* mmap_alloc(mstate m, size_t nb) {
       return 0;
   }
   if (mmsize > nb) {     /* Check for wrap around 0 */
-    char* mm = (char*)(CALL_DIRECT_MMAP(mmsize));
+    char* mm = (char*)(CALL_DIRECT_MMAP(m->kernelallocatordata, mmsize));
     if (mm != CMFAIL) {
       size_t offset = align_offset(chunk2mem(mm));
       size_t psize = mmsize - offset - MMAP_FOOT_PAD;
@@ -3845,7 +3846,7 @@ static mchunkptr mmap_resize(mstate m, mchunkptr oldp, size_t nb, int flags) {
     size_t offset = oldp->prev_foot;
     size_t oldmmsize = oldsize + offset + MMAP_FOOT_PAD;
     size_t newmmsize = mmap_align(nb + SIX_SIZE_T_SIZES + CHUNK_ALIGN_MASK);
-    char* cp = (char*)CALL_MREMAP((char*)oldp - offset,
+    char* cp = (char*)CALL_MREMAP(m->kernelallocatordata, (char*)oldp - offset,
                                   oldmmsize, newmmsize, flags);
     if (cp != CMFAIL) {
       mchunkptr newp = (mchunkptr)(cp + offset);
@@ -4063,7 +4064,7 @@ static void* sys_alloc(mstate m, size_t nb) {
     ACQUIRE_MALLOC_GLOBAL_LOCK();
 
     if (ss == 0) {  /* First time through or recovery */
-      char* base = (char*)CALL_MORECORE(0);
+      char* base = (char*)CALL_MORECORE(m->kernelallocatordata, 0);
       if (base != CMFAIL) {
         size_t fp;
         /* Adjust to end on a page boundary */
@@ -4073,7 +4074,7 @@ static void* sys_alloc(mstate m, size_t nb) {
         if (asize > nb && asize < HALF_MAX_SIZE_T &&
             (m->footprint_limit == 0 ||
              (fp > m->footprint && fp <= m->footprint_limit)) &&
-            (br = (char*)(CALL_MORECORE(asize))) == base) {
+            (br = (char*)(CALL_MORECORE(m->kernelallocatordata, asize))) == base) {
           tbase = base;
           tsize = asize;
         }
@@ -4084,7 +4085,7 @@ static void* sys_alloc(mstate m, size_t nb) {
       asize = granularity_align(nb - m->topsize + SYS_ALLOC_PADDING);
       /* Use mem here only if it did continuously extend old space */
       if (asize < HALF_MAX_SIZE_T &&
-          (br = (char*)(CALL_MORECORE(asize))) == ss->base+ss->size) {
+          (br = (char*)(CALL_MORECORE(m->kernelallocatordata, asize))) == ss->base+ss->size) {
         tbase = br;
         tsize = asize;
       }
@@ -4096,11 +4097,11 @@ static void* sys_alloc(mstate m, size_t nb) {
             asize < nb + SYS_ALLOC_PADDING) {
           size_t esize = granularity_align(nb + SYS_ALLOC_PADDING - asize);
           if (esize < HALF_MAX_SIZE_T) {
-            char* end = (char*)CALL_MORECORE(esize);
+            char* end = (char*)CALL_MORECORE(m->kernelallocatordata, esize);
             if (end != CMFAIL)
               asize += esize;
             else {            /* Can't use; try to release */
-              (void) CALL_MORECORE(-asize);
+              (void) CALL_MORECORE(m->kernelallocatordata, -asize);
               br = CMFAIL;
             }
           }
@@ -4118,7 +4119,7 @@ static void* sys_alloc(mstate m, size_t nb) {
   }
 
   if (HAVE_MMAP && tbase == CMFAIL) {  /* Try MMAP */
-    char* mp = (char*)(CALL_MMAP(asize));
+    char* mp = (char*)(CALL_MMAP(m->kernelallocatordata, asize));
     if (mp != CMFAIL) {
       tbase = mp;
       tsize = asize;
@@ -4131,8 +4132,8 @@ static void* sys_alloc(mstate m, size_t nb) {
       char* br = CMFAIL;
       char* end = CMFAIL;
       ACQUIRE_MALLOC_GLOBAL_LOCK();
-      br = (char*)(CALL_MORECORE(asize));
-      end = (char*)(CALL_MORECORE(0));
+      br = (char*)(CALL_MORECORE(m->kernelallocatordata, asize));
+      end = (char*)(CALL_MORECORE(m->kernelallocatordata, 0));
       RELEASE_MALLOC_GLOBAL_LOCK();
       if (br != CMFAIL && end != CMFAIL && br < end) {
         size_t ssize = end - br;
@@ -4245,7 +4246,7 @@ static size_t release_unused_segments(mstate m) {
         else {
           unlink_large_chunk(m, tp);
         }
-        if (CALL_MUNMAP(base, size) == 0) {
+        if (CALL_MUNMAP(m->kernelallocatordata, base, size) == 0) {
           released += size;
           m->footprint -= size;
           /* unlink obsoleted record */
@@ -4288,8 +4289,8 @@ static int sys_trim(mstate m, size_t pad) {
               !has_segment_link(m, sp)) { /* can't shrink if pinned */
             size_t newsize = sp->size - extra;
             /* Prefer mremap, fall back to munmap */
-            if ((CALL_MREMAP(sp->base, sp->size, newsize, 0) != MFAIL) ||
-                (CALL_MUNMAP(sp->base + newsize, extra) == 0)) {
+            if ((CALL_MREMAP(m->kernelallocatordata, sp->base, sp->size, newsize, 0) != MFAIL) ||
+                (CALL_MUNMAP(m->kernelallocatordata, sp->base + newsize, extra) == 0)) {
               released = extra;
             }
           }
@@ -4300,10 +4301,10 @@ static int sys_trim(mstate m, size_t pad) {
           ACQUIRE_MALLOC_GLOBAL_LOCK();
           {
             /* Make sure end of memory is where we last set it. */
-            char* old_br = (char*)(CALL_MORECORE(0));
+            char* old_br = (char*)(CALL_MORECORE(m->kernelallocatordata, 0));
             if (old_br == sp->base + sp->size) {
-              char* rel_br = (char*)(CALL_MORECORE(-extra));
-              char* new_br = (char*)(CALL_MORECORE(0));
+              char* rel_br = (char*)(CALL_MORECORE(m->kernelallocatordata, -extra));
+              char* new_br = (char*)(CALL_MORECORE(m->kernelallocatordata, 0));
               if (rel_br != CMFAIL && new_br < old_br)
                 released = old_br - new_br;
             }
@@ -4342,7 +4343,7 @@ static void dispose_chunk(mstate m, mchunkptr p, size_t psize) {
     size_t prevsize = p->prev_foot;
     if (is_mmapped(p)) {
       psize += prevsize + MMAP_FOOT_PAD;
-      if (CALL_MUNMAP((char*)p - prevsize, psize) == 0)
+      if (CALL_MUNMAP(m->kernelallocatordata, (char*)p - prevsize, psize) == 0)
         m->footprint -= psize;
       return;
     }
@@ -4681,7 +4682,7 @@ void dlfree(void* mem) {
           size_t prevsize = p->prev_foot;
           if (is_mmapped(p)) {
             psize += prevsize + MMAP_FOOT_PAD;
-            if (CALL_MUNMAP((char*)p - prevsize, psize) == 0)
+            if (CALL_MUNMAP(m->kernelallocatordata, (char*)p - prevsize, psize) == 0)
               fm->footprint -= psize;
             goto postaction;
           }
@@ -5371,7 +5372,7 @@ size_t dlmalloc_usable_size(void* mem) {
 
 #if MSPACES
 
-static mstate init_user_mstate(char* tbase, size_t tsize) {
+static mstate init_user_mstate(char* tbase, size_t tsize, void *kernelallocatordata) {
   size_t msize = pad_request(sizeof(struct malloc_state));
   mchunkptr mn;
   mchunkptr msp = align_as_chunk(tbase);
@@ -5384,6 +5385,7 @@ static mstate init_user_mstate(char* tbase, size_t tsize) {
   m->magic = mparams.magic;
   m->release_checks = MAX_RELEASE_CHECK_RATE;
   m->mflags = mparams.default_mflags;
+  m->kernelallocatordata=kernelallocatordata;
   m->extp = 0;
   m->exts = 0;
   disable_contiguous(m);
@@ -5394,7 +5396,7 @@ static mstate init_user_mstate(char* tbase, size_t tsize) {
   return m;
 }
 
-mspace create_mspace(size_t capacity, int locked) {
+mspace create_mspace(size_t capacity, int locked, void *kernelallocatordata) {
   mstate m = 0;
   size_t msize;
   ensure_initialization();
@@ -5403,9 +5405,9 @@ mspace create_mspace(size_t capacity, int locked) {
     size_t rs = ((capacity == 0)? mparams.granularity :
                  (capacity + TOP_FOOT_SIZE + msize));
     size_t tsize = granularity_align(rs);
-    char* tbase = (char*)(CALL_MMAP(tsize));
+    char* tbase = (char*)(CALL_MMAP(kernelallocatordata, tsize));
     if (tbase != CMFAIL) {
-      m = init_user_mstate(tbase, tsize);
+      m = init_user_mstate(tbase, tsize, kernelallocatordata);
       m->seg.sflags = USE_MMAP_BIT;
       set_lock(m, locked);
     }
@@ -5413,14 +5415,14 @@ mspace create_mspace(size_t capacity, int locked) {
   return (mspace)m;
 }
 
-mspace create_mspace_with_base(void* base, size_t capacity, int locked) {
+mspace create_mspace_with_base(void* base, size_t capacity, int locked, void *kernelallocatordata) {
   mstate m = 0;
   size_t msize;
   ensure_initialization();
   msize = pad_request(sizeof(struct malloc_state));
   if (capacity > msize + TOP_FOOT_SIZE &&
       capacity < (size_t) -(msize + TOP_FOOT_SIZE + mparams.page_size)) {
-    m = init_user_mstate((char*)base, capacity);
+    m = init_user_mstate((char*)base, capacity, kernelallocatordata);
     m->seg.sflags = EXTERN_BIT;
     set_lock(m, locked);
   }
@@ -5454,7 +5456,7 @@ size_t destroy_mspace(mspace msp) {
       flag_t flag = sp->sflags;
       sp = sp->next;
       if ((flag & USE_MMAP_BIT) && !(flag & EXTERN_BIT) &&
-          CALL_MUNMAP(base, size) == 0)
+          CALL_MUNMAP(ms->kernelallocatordata, base, size) == 0)
         freed += size;
     }
   }
@@ -5605,7 +5607,7 @@ void mspace_free(mspace msp, void* mem) {
           size_t prevsize = p->prev_foot;
           if (is_mmapped(p)) {
             psize += prevsize + MMAP_FOOT_PAD;
-            if (CALL_MUNMAP((char*)p - prevsize, psize) == 0)
+            if (CALL_MUNMAP(fm->kernelallocatordata, (char*)p - prevsize, psize) == 0)
               fm->footprint -= psize;
             goto postaction;
           }
