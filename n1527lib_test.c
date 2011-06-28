@@ -28,10 +28,11 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#define RECORDS 4000000
+#define RECORDS 400000
 
 #include "n1527lib.h"
 #include <stdio.h>
+#include <assert.h>
 
 #ifdef WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -74,14 +75,55 @@ static usCount GetUsCount()
 static size_t sizes[RECORDS];
 static void *ptrs[RECORDS];
 static mpool syspool;
+static struct mpool_attribute_alignment alignment128 = { MPOOL_ATTRIBUTE_ALIGNMENT, mpool_attribute_alignment_compare, 0, 128 };
+static struct mpool_attribute_data *alignment128_attributes[]= { (struct mpool_attribute_data *) &alignment128, 0 };
+static struct mpool_attribute_alignment alignment4096 = { MPOOL_ATTRIBUTE_ALIGNMENT, mpool_attribute_alignment_compare, 0, 4096 };
+static struct mpool_attribute_data *alignment4096_attributes[]= { (struct mpool_attribute_data *) &alignment4096, 0 };
+static struct mpool_attribute_alignment alignment128a = { MPOOL_ATTRIBUTE_ALIGNMENT, mpool_attribute_alignment_compare, 0, 128 };
+static struct mpool_attribute_data *alignment128_attributes_a[]= { (struct mpool_attribute_data *) &alignment128a, 0 };
 
 int main(void)
 {
   size_t n, m;
   usCount start, end;
+  size_t roundings[16];
   printf("N1527lib test program\n"
          "-=-=-=-=-=-=-=-=-=-=-\n");
-  syspool=mpool_obtain(0);
+  n=mpool_minimum_roundings(roundings, 16); assert(n<16);
+  printf("Minimum roundings from available allocators:\n");
+  for(m=0; m<n; m++)
+  {
+    printf("  %u\n", roundings[m]);
+  }
+  {
+    mpool pool128, pool4096, poolA;
+    void *temp1, *temp2;
+    size_t usagecount, *alignments, *roundings;
+    pool128=mpool_obtain(alignment128_attributes);
+    temp1=mpool_malloc(pool128, 1);
+    temp2=mpool_malloc(pool128, 1);
+    printf("128 aligned %p (%u), %p (%u)", temp1, mpool_usable_size(pool128, temp1), temp2, mpool_usable_size(pool128, temp2));
+    assert(!((size_t)temp1 & 127));
+    assert(!((size_t)temp2 & 127));
+    mpool_info(pool128, &usagecount, &alignments, &roundings, NULL);
+    printf("  usagecount=%u, roundings[0]=%u\n", usagecount, roundings[0]);
+
+    pool4096=mpool_obtain(alignment4096_attributes);
+    temp1=mpool_malloc(pool4096, 1);
+    temp2=mpool_malloc(pool4096, 1);
+    printf("4096 aligned %p (%u), %p (%u)", temp1, mpool_usable_size(pool4096, temp1), temp2, mpool_usable_size(pool4096, temp2));
+    assert(!((size_t)temp1 & 4095));
+    assert(!((size_t)temp2 & 4095));
+    mpool_info(pool4096, &usagecount, &alignments, &roundings, NULL);
+    printf("  usagecount=%u, roundings[0]=%u\n", usagecount, roundings[0]);
+
+    poolA=mpool_obtain(alignment128_attributes_a);
+    mpool_info(poolA, &usagecount, &alignments, &roundings, NULL);
+    printf("PoolA: usagecount=%u, roundings[0]=%u\n", usagecount, roundings[0]);
+    assert(poolA==pool128);
+  }
+
+  syspool=mpool_obtain(MPOOL_DEFAULT);
   srand(1);
   for(n=0; n<RECORDS; n++)
     sizes[n]=rand() & 1023;
@@ -100,7 +142,7 @@ int main(void)
     printf("Did %u frees\n", frees);
   }
 
-  if(1)
+  if(0)
   {
     typedef void* mspace;
     extern mspace get_dlmalloc_mspace(mpool pool);

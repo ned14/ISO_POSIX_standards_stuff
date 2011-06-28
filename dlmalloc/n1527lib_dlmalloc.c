@@ -212,6 +212,7 @@ mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool system
         case MPOOL_ATTRIBUTE_USESYSTEMPOOL:
           {
             struct mpool_attribute_usesystempool *a=(struct mpool_attribute_usesystempool *) *attributes;
+            /* Do nothing as it's handled above */
             break;
           }
         default:

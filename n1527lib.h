@@ -119,6 +119,8 @@ the DLL.
 #define MPOOL_PREVENT_MOVE         (1<<2)       //!< Prevents a reallocation relocating the block
 #define MPOOL_FREE_NOW             (1<<3)       //!< Inhibits delayed freeing of this particular block
 
+#define MPOOL_HIGH_ADDR            (1<<12)      //!< Hints that high addresses ought to be used for this particular block
+
 #define MPOOL_USERFLAGS_FIRST      (1<<16)
 #define MPOOL_USERFLAGS_LAST       (1<<31)
 #define MPOOL_USERFLAGS_MASK       0xffff0000
@@ -138,14 +140,16 @@ typedef struct mpool_s *mpool;
 \brief Encodes a memory pool attribute
 */
 enum mpool_attribute {
-  MPOOL_ATTRIBUTE_NULL,               //!< This attribute will be ignored
-  MPOOL_ATTRIBUTE_DESTROYUNUSED,      //!< Sets always destroy unused memory for this memory pool. See struct mpool_attribute_destroyunused
-  MPOOL_ATTRIBUTE_ALIGNMENT,          //!< Sets alignment for this memory pool. See struct mpool_attribute_alignment
-  MPOOL_ATTRIBUTE_SIZEROUNDING,       //!< Sets size rounding for this memory pool. See struct mpool_attribute_sizerounding
-  MPOOL_ATTRIBUTE_INSTALL_ALLOCATOR,  //!< Installs a new allocator
-  MPOOL_ATTRIBUTE_REMOVE_ALLOCATOR,   //!< Removes a previously installed allocator
+  MPOOL_ATTRIBUTE_NULL,                     //!< This attribute will be ignored
+  MPOOL_ATTRIBUTE_DESTROYUNUSED,            //!< Sets always destroy unused memory for this memory pool. See struct mpool_attribute_destroyunused
+  MPOOL_ATTRIBUTE_ALIGNMENT,                //!< Sets alignment for this memory pool. See struct mpool_attribute_alignment
+  MPOOL_ATTRIBUTE_SIZEROUNDING,             //!< Sets size rounding for this memory pool. See struct mpool_attribute_sizerounding
+  MPOOL_ATTRIBUTE_USESYSTEMPOOL,            //!< Sets the memory pool to be used by a memory pool for obtaining and releasing system memory. See struct mpool_attribute_usesystempool
 
-  MPOOL_ATTRIBUTE_LAST                //!< First free attribute available
+  MPOOL_ATTRIBUTE_INSTALL_ALLOCATOR=256,    //!< Installs a new allocator
+  MPOOL_ATTRIBUTE_REMOVE_ALLOCATOR,         //!< Removes a previously installed allocator
+
+  MPOOL_ATTRIBUTE_LAST=1024                 //!< First free attribute available
 };
 #endif
 
@@ -155,35 +159,45 @@ enum mpool_attribute {
 struct mpool_attribute_data;
 struct mpool_attribute_data {
   int id;                                   //!< An id from enum mpool_attribute, or proprietary extension
-  size_t length;                            //!< Typically sizeof(type), but may be shorter if we don't want to compare the whole structure
+  int (*compare)(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b);
   int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
 };
 /*! \brief Sets that all memory in a memory pool is destroyed (e.g. zeroed) as soon as it becomes unused. Useful for when
 storing encryption keys etc. Also implies that any newly allocated memory will always be zero filled. */
 struct mpool_attribute_destroyunused {
   int id;                                   //!< Set to MPOOL_ATTRIBUTE_DESTROYUNUSED
-  size_t length;                            //!< sizeof(type)
+  int (*compare)(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b);
   int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
 };
 /*! \brief Describes the minimum alignment for all data allocated within a memory pool */
 struct mpool_attribute_alignment {
   int id;                                   //!< Set to MPOOL_ATTRIBUTE_ALIGNMENT
-  size_t length;                            //!< sizeof(type)
+  int (*compare)(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b);
   int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
   size_t alignment;                         //!< Set to the alignment to be used for allocations in this pool
 };
+inline int mpool_attribute_alignment_compare(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b) { return !b ? 1 /* alignment is important */ : ((const struct mpool_attribute_alignment *) me)->alignment<((const struct mpool_attribute_alignment *) b)->alignment; }
 /*! \brief Describes the size rounding for all data allocated within a memory pool */
 struct mpool_attribute_sizerounding {
   int id;                                   //!< Set to MPOOL_ATTRIBUTE_SIZEROUNDING
-  size_t length;                            //!< sizeof(type)
+  int (*compare)(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b);
   int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
   size_t rounding;
 };
+inline int mpool_attribute_sizerounding_compare(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b) { return !b ? 0 /* rounding is not important */ : ((const struct mpool_attribute_sizerounding *) me)->rounding<((const struct mpool_attribute_sizerounding *) b)->rounding; }
+/*! \brief Sets the memory pool to be used by a memory pool for obtaining and releasing system memory */
+struct mpool_attribute_usesystempool {
+  int id;                                   //!< Set to MPOOL_ATTRIBUTE_USESYSTEMPOOL
+  int (*compare)(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b);
+  int error;                                //!< Zero on entry, set to error if there was an error applying this attribute
+  mpool systempool;
+};
+inline int mpool_attribute_usesystempool_compare(const struct mpool_attribute_data *me, const struct mpool_attribute_data *b) { return ((const struct mpool_attribute_usesystempool *) me)->systempool!=((const struct mpool_attribute_usesystempool *) b)->systempool; }
 /*! \brief Defines an allocator API set */
 struct mpool_APIset {
-  int (*rateattributes)(const struct mpool_attribute_data **RESTRICT attributes); //!< Scores a set of attributes. Higher is better.
-  mpool (*createpool)(struct mpool_attribute_data **RESTRICT attributes);         //!< Creates a pool
-  void (*destroypool)(mpool pool);                                                //!< Destroys a pool
+  int (*rateattributes)(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes); //!< Scores a set of attributes. Higher is better.
+  mpool (*createpool)(struct mpool_attribute_data **RESTRICT attributes, mpool systempool);         //!< Creates a pool
+  void (*destroypool)(mpool pool);                                                                  //!< Destroys a pool
   void **(*batch)(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
   void *(*calloc)(mpool pool, size_t nmemb, size_t size);
   void (*free)(mpool pool, void *ptr);
@@ -195,16 +209,23 @@ struct mpool_APIset {
 };
 #endif
 
+/*! \brief Returns a sorted list of minimum roundings for the allocators available */
+N1527MALLOCEXTSPEC size_t mpool_minimum_roundings(size_t roundings[], size_t size);
 /*! \brief Obtains a desired memory pool. Make SURE attributes is statically declared! */
 N1527MALLOCEXTSPEC mpool mpool_obtain(struct mpool_attribute_data **attributes);
 /*! \brief Destroys a memory pool */
 N1527MALLOCEXTSPEC void mpool_release(mpool pool);
 /*! \brief Returns all known memory pools */
 N1527MALLOCEXTSPEC size_t mpool_knownpools(mpool *poollist, size_t poollistlen);
-/*! \brief Returns the usage count for a memory pool */
-N1527MALLOCEXTSPEC size_t mpool_usagecount(mpool pool);
+/*! \brief Obtains the usage count, alignments, roundings and attributes for a memory pool, returning 1 if pool found */
+N1527MALLOCEXTSPEC _Bool mpool_info(mpool pool, size_t *RESTRICT usagecount, const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data ***RESTRICT attributes);
 /*! \brief Synchronises any outstanding operations on a memory pool for the calling thread */
 N1527MALLOCEXTSPEC void mpool_sync(mpool pool);
+
+/*! \brief Used to request the default pool from mpool_obtain() */
+#define MPOOL_DEFAULT ((struct mpool_attribute_data **)(size_t) 0)
+/*! \brief Used to request the kernel pool from mpool_obtain() */
+#define MPOOL_KERNEL ((struct mpool_attribute_data **)(size_t) 1)
 
 struct mpool_s_ {
   struct mpool_APIset *APIset;

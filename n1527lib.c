@@ -36,10 +36,14 @@ DEALINGS IN THE SOFTWARE.
 #define MAX_POOLS 64
 
 static mtx_t staticdatalock;
-static struct mpool_APIset allocators[MAX_ALLOCATORS];
+static struct allocator_s
+{
+  struct mpool_APIset APIset;
+  const size_t *RESTRICT alignments, *RESTRICT roundings;
+} allocators[MAX_ALLOCATORS];
 static struct pool_s
 {
-  struct mpool_APIset *allocator;
+  struct allocator_s *allocator;
   const struct mpool_attribute_data **attributes;
   mpool pool;
   size_t count;
@@ -47,25 +51,88 @@ static struct pool_s
 
 extern struct mpool_APIset kernelpage_allocator_APIset(void);
 extern struct mpool_APIset dlmalloc_allocator_APIset(void);
+static struct mpool_attribute_alignment kernelpage_allocator_alignment = { MPOOL_ATTRIBUTE_ALIGNMENT, mpool_attribute_alignment_compare };
+static struct mpool_attribute_sizerounding kernelpage_allocator_sizerounding = { MPOOL_ATTRIBUTE_SIZEROUNDING, mpool_attribute_sizerounding_compare };
+static struct mpool_attribute_data *kernelpage_allocator_attributes[]= {
+  (struct mpool_attribute_data *) &kernelpage_allocator_alignment,
+  (struct mpool_attribute_data *) &kernelpage_allocator_sizerounding,
+  0
+};
+static struct mpool_attribute_alignment dlmalloc_allocator_alignment = { MPOOL_ATTRIBUTE_ALIGNMENT, mpool_attribute_alignment_compare };
+static struct mpool_attribute_sizerounding dlmalloc_allocator_sizerounding = { MPOOL_ATTRIBUTE_SIZEROUNDING, mpool_attribute_sizerounding_compare };
+static struct mpool_attribute_data *dlmalloc_allocator_attributes[]= {
+  (struct mpool_attribute_data *) &dlmalloc_allocator_alignment,
+  (struct mpool_attribute_data *) &dlmalloc_allocator_sizerounding,
+  0
+};
+static void initialise_static_data(void)
+{
+  mtx_init(&staticdatalock, mtx_plain);
+  // Bootstrap into existence by firing up the kernel page allocator then dlmalloc
+  allocators[0].APIset=kernelpage_allocator_APIset();
+  allocators[1].APIset=dlmalloc_allocator_APIset();
+  // Configure attributes for the kernel page allocator
+  allocators[0].APIset.rateattributes(&allocators[0].alignments, &allocators[0].roundings, NULL);
+  kernelpage_allocator_alignment.alignment=allocators[0].alignments[0];
+  kernelpage_allocator_sizerounding.rounding=allocators[0].roundings[0];
+  // Instantiate kernel page allocator
+  pools[1].allocator=&allocators[0];
+  pools[1].attributes=kernelpage_allocator_attributes;
+  if(!(pools[1].pool=pools[1].allocator->APIset.createpool(kernelpage_allocator_attributes, pools[1].pool)))
+  {
+    abort();
+  }
+  pools[1].count=-1;
+  // Configure attributes for dlmalloc
+  allocators[1].APIset.rateattributes(&allocators[1].alignments, &allocators[1].roundings, NULL);
+  dlmalloc_allocator_alignment.alignment=allocators[1].alignments[0];
+  dlmalloc_allocator_sizerounding.rounding=allocators[1].roundings[0];
+  // Instantiate dlmalloc
+  pools[0].allocator=&allocators[1];
+  pools[0].attributes=dlmalloc_allocator_attributes;
+  if(!(pools[0].pool=pools[0].allocator->APIset.createpool(dlmalloc_allocator_attributes, pools[1].pool)))
+  {
+    abort();
+  }
+  pools[0].count=-1;
+}
+
+size_t mpool_minimum_roundings(size_t roundings[], size_t size)
+{
+  size_t n, m, idx=0;
+  if(!pools[0].allocator) initialise_static_data();
+  mtx_lock(&staticdatalock);
+  for(n=0; n<MAX_ALLOCATORS && allocators[n].APIset.createpool; n++)
+  {
+    const size_t *RESTRICT _roundings;
+    for(_roundings=allocators[n].roundings; *_roundings; _roundings++)
+    {
+      for(m=0; m<size && m<idx; m++)
+      {
+        if(*_roundings<=roundings[m]) break;
+      }
+      if(m<size)
+      {
+        if(*_roundings!=roundings[m])
+        {
+          memmove(roundings+m+1, roundings+m, (idx-m)*sizeof(size_t));
+          roundings[m]=*_roundings;
+          idx++;
+        }
+      }
+      else idx++;
+    }
+  }
+  mtx_unlock(&staticdatalock);
+  return idx;
+}
+
+
 mpool mpool_obtain(struct mpool_attribute_data **attributes)
 {
-  if(!pools[0].allocator)
-  { // Bootstrap into existence by firing up the kernel page allocator then dlmalloc
-    struct mpool_APIset kernelpageAPIset=allocators[0]=kernelpage_allocator_APIset();
-    struct mpool_APIset defaultAPIset=allocators[1]=dlmalloc_allocator_APIset();
-
-    mtx_init(&staticdatalock, mtx_plain);
-    mtx_lock(&staticdatalock);
-    // We guarantee that their rateattributes function will always get called
-    kernelpageAPIset.rateattributes(NULL);
-    defaultAPIset.rateattributes(NULL);
-    pools[1].allocator=&allocators[0];
-    pools[1].pool=kernelpageAPIset.createpool(NULL);
-    pools[0].allocator=&allocators[1];
-    pools[0].pool=defaultAPIset.createpool(NULL);
-    mtx_unlock(&staticdatalock);
-  }
-  if(!attributes) return pools[0].pool;
+  if(!pools[0].allocator) initialise_static_data();
+  if(MPOOL_DEFAULT==attributes) return pools[0].pool;
+  else if(MPOOL_KERNEL==attributes) return pools[1].pool;
   else
   {
     size_t n, maxn, maxidx;
@@ -73,16 +140,16 @@ mpool mpool_obtain(struct mpool_attribute_data **attributes)
     struct scores_s
     {
       int score;
-      struct mpool_APIset *allocator;
+      struct allocator_s *allocator;
     } scores[MAX_ALLOCATORS];
     int comparescore(const void *a, const void *b);
     mtx_lock(&staticdatalock);
-    for(maxn=0; maxn<MAX_ALLOCATORS && allocators[maxn].rateattributes; maxn++)
-      scores[maxn].score=(scores[maxn].allocator=&allocators[maxn])->rateattributes(attributes);
+    for(maxn=0; maxn<MAX_ALLOCATORS && allocators[maxn].APIset.createpool; maxn++)
+      scores[maxn].score=(scores[maxn].allocator=&allocators[maxn])->APIset.rateattributes(NULL, NULL, attributes);
     //qsort(&scores, n, sizeof(struct scores_s), comparescore); maxidx=0;
     for(maxidx=(size_t)-1, n=0; n<maxn; n++)
     {
-      if(scores[n].score>maxscore) maxidx=n;
+      if(scores[n].score>maxscore) { maxidx=n; maxscore=scores[n].score; }
     }
     if(INT_MIN!=maxscore)
     { // Do we already have a pool matching this allocator and these attributes?
@@ -95,8 +162,9 @@ mpool mpool_obtain(struct mpool_attribute_data **attributes)
           for(; *a; a++)
           {
             for(b=pools[n].attributes; *b && (*b)->id!=(*a)->id; b++);
+            // If there is an attribute in requested that is not in existing, make a new pool
             if(!*b) break;
-            comparison=(*a==*b) ? 0 : memcmp(*a, *b, (*b)->length);
+            comparison=(*a==*b) ? 0 : ((*b)->compare ? (*b)->compare(*b, *a) : memcmp(*a, *b, sizeof(struct mpool_attribute_data)));
             if(comparison) break;
           }
           if(!*a)
@@ -104,38 +172,39 @@ mpool mpool_obtain(struct mpool_attribute_data **attributes)
             for(b=pools[n].attributes; *b; b++)
             {
               for(a=attributes; *a && (*b)->id!=(*a)->id; a++);
-              if(!*b) break;
-              comparison=(*a==*b) ? 0 : memcmp(*a, *b, (*b)->length);
+              // If there is an attribute in existing that is not in requested, ask compare function if the attribute is important
+              comparison=(*a==*b) ? 0 : ((*b)->compare ? (*b)->compare(*b, *a) : (*a ? memcmp(*a, *b, sizeof(struct mpool_attribute_data)) : 1));
               if(comparison) break;
             }
             if(!*b)
             { // They're identical, so return existing pool
               mpool ret=pools[n].pool;
-              pools[n].count++;
+              if(n>1) pools[n].count++;
               mtx_unlock(&staticdatalock);
               return ret;
             }
           }
         }
       }
-      // No existing pool, so make me a new one
-      for(n=0; n<MAX_POOLS && pools[n].pool; n++);
-      if(MAX_POOLS==n)
-      {
-        mtx_unlock(&staticdatalock);
-        errno=ENOMEM;
-        return NULL;
-      }
-      if((pools[n].pool=pools[n].allocator->createpool(attributes)))
-      {
-        pools[n].allocator=scores[maxidx].allocator;
-        pools[n].attributes=attributes;
-        pools[n].count=1;
-        mtx_unlock(&staticdatalock);
-        return pools[n].pool;
-      }
+    }
+    // No existing pool, so make me a new one
+    for(n=0; n<MAX_POOLS && pools[n].pool; n++);
+    if(MAX_POOLS==n)
+    {
+      mtx_unlock(&staticdatalock);
+      errno=ENOMEM;
+      return NULL;
+    }
+    if((pools[n].pool=scores[maxidx].allocator->APIset.createpool(attributes, pools[1].pool)))
+    {
+      pools[n].allocator=scores[maxidx].allocator;
+      pools[n].attributes=attributes;
+      pools[n].count=1;
+      mtx_unlock(&staticdatalock);
+      return pools[n].pool;
     }
     mtx_unlock(&staticdatalock);
+    errno=ENOMEM;
     return NULL;
   }
 }
@@ -174,18 +243,27 @@ size_t mpool_knownpools(mpool *poollist, size_t poollistlen)
   }
   return n;
 }
-size_t mpool_usagecount(mpool pool)
+_Bool mpool_info(mpool pool, size_t *RESTRICT usagecount, const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data ***RESTRICT attributes)
 {
   size_t n=0;
-  if(pool==pools[0].pool || pool==pools[1].pool) return (size_t)-1;
+  if(alignments || roundings) ((struct mpool_s_ *) pool)->APIset->rateattributes(alignments, roundings, NULL);
+  if(!usagecount && !attributes) return 1;
   mtx_lock(&staticdatalock);
   for(n=0; n<MAX_POOLS && pools[n].pool; n++)
   {
     if(pools[n].pool==pool) break;
   }
-  n=(MAX_POOLS==n) ? 0 : pools[n].count;
+  if(MAX_POOLS==n)
+  {
+    if(usagecount) *usagecount=-1;
+    if(attributes) *attributes=0;
+    mtx_unlock(&staticdatalock);
+    return 0;
+  }
+  if(usagecount) *usagecount=pools[n].count;
+  if(attributes) *attributes=pools[n].attributes;
   mtx_unlock(&staticdatalock);
-  return n;
+  return 1;
 }
 void mpool_sync(mpool pool)
 {
