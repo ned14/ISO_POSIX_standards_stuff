@@ -44,9 +44,14 @@ DEALINGS IN THE SOFTWARE.
 
 struct mpool_s {
   struct mpool_APIset *APIset;   /* This HAS to be here! */
-  size_t page_size;
 };
 static struct mpool_s kernelpagepool;
+static size_t AlignmentsAndRoundings[]={
+  /* page size */ 0,
+  /* large page size? */ 0,
+  0
+};
+
 /* Set up the blockmetadata indexing */
 typedef struct blockmetadata_s blockmetadata_t;
 struct blockmetadata_s
@@ -111,8 +116,8 @@ static void FreeBlockMetaData(blockmetadata_t *bmd)
   freeblockmetadata=bmd;
 }
 
-static int rateattributes(const struct mpool_attribute_data **RESTRICT attributes);
-static mpool createpool(struct mpool_attribute_data **RESTRICT attributes);
+static int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes);
+static mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool);
 static void destroypool(mpool pool);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_calloc(mpool pool, size_t nmemb, size_t size);
@@ -147,10 +152,12 @@ struct mpool_APIset kernelpage_allocator_APIset(void)
   return kernelpage_apiset;
 }
 
-int rateattributes(const struct mpool_attribute_data **RESTRICT attributes)
+int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes)
 {
   struct mpool_s *m=&kernelpagepool;
   int score=0;
+  if(alignments) *alignments=AlignmentsAndRoundings;
+  if(roundings) *roundings=AlignmentsAndRoundings;
   if(!m->APIset)
   {
     m->APIset=&kernelpage_apiset;
@@ -158,49 +165,58 @@ int rateattributes(const struct mpool_attribute_data **RESTRICT attributes)
     {
       SYSTEM_INFO si={0};
       GetSystemInfo(&si);
-      m->page_size=si.dwPageSize;
+      AlignmentsAndRoundings[0]=si.dwPageSize;
     }
 #else
-    m->page_size=getpagesize();
+    AlignmentsAndRoundings[0]=getpagesize();
 #endif
     NEDTRIE_INIT(&blockmetadata_tree);
     NewBlockMetaDataStorage();
   }
-  for(; *attributes; attributes++)
+  if(attributes)
   {
-    switch((*attributes)->id)
+    for(; *attributes; attributes++)
     {
-    case MPOOL_ATTRIBUTE_DESTROYUNUSED:
-      { /* Kernel always destroys deallocated memory, so this is good */
-        score++;
-        break;
-      }
-    case MPOOL_ATTRIBUTE_ALIGNMENT:
+      switch((*attributes)->id)
       {
-        struct mpool_attribute_alignment *a=(struct mpool_attribute_alignment *) *attributes;
-        if(a->alignment & (m->page_size-1))
-        { /* Instant fail */
+      case MPOOL_ATTRIBUTE_DESTROYUNUSED:
+        { /* Kernel always destroys deallocated memory, so this is good */
+          score++;
+          break;
+        }
+      case MPOOL_ATTRIBUTE_ALIGNMENT:
+        {
+          struct mpool_attribute_alignment *a=(struct mpool_attribute_alignment *) *attributes;
+          if(a->alignment & (AlignmentsAndRoundings[0]-1))
+          { /* Instant fail */
+            return INT_MIN;
+          }
+          score+=AlignmentsAndRoundings[0];
+          break;
+        }
+      case MPOOL_ATTRIBUTE_SIZEROUNDING:
+        {
+          struct mpool_attribute_sizerounding *a=(struct mpool_attribute_sizerounding *) *attributes;
+          if(a->rounding & (AlignmentsAndRoundings[0]-1))
+          { /* Instant fail */
+            return INT_MIN;
+          }
+          score+=AlignmentsAndRoundings[0];
+          break;
+        }
+      case MPOOL_ATTRIBUTE_USESYSTEMPOOL:
+        {
+          struct mpool_attribute_usesystempool *a=(struct mpool_attribute_usesystempool *) *attributes;
+          /* Instant fail */
           return INT_MIN;
         }
-        score+=m->page_size;
-        break;
-      }
-    case MPOOL_ATTRIBUTE_SIZEROUNDING:
-      {
-        struct mpool_attribute_sizerounding *a=(struct mpool_attribute_sizerounding *) *attributes;
-        if(a->rounding & (m->page_size-1))
-        { /* Instant fail */
-          return INT_MIN;
-        }
-        score+=m->page_size;
-        break;
       }
     }
   }
   return score;
 }
 
-mpool createpool(struct mpool_attribute_data **RESTRICT attributes)
+mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool)
 { /* The kernelpage allocator is a little unusual - it only has one pool! */
   struct mpool_s *m=&kernelpagepool;
   int ok=0;
@@ -218,7 +234,7 @@ mpool createpool(struct mpool_attribute_data **RESTRICT attributes)
     case MPOOL_ATTRIBUTE_ALIGNMENT:
       {
         struct mpool_attribute_alignment *a=(struct mpool_attribute_alignment *) *attributes;
-        if(a->alignment & (m->page_size-1))
+        if(a->alignment & (AlignmentsAndRoundings[0]-1))
           a->error=EACCES;
         else
           ok|=1;
@@ -227,12 +243,20 @@ mpool createpool(struct mpool_attribute_data **RESTRICT attributes)
     case MPOOL_ATTRIBUTE_SIZEROUNDING:
       {
         struct mpool_attribute_sizerounding *a=(struct mpool_attribute_sizerounding *) *attributes;
-        if(a->rounding & (m->page_size-1))
+        if(a->rounding & (AlignmentsAndRoundings[0]-1))
           a->error=EACCES;
         else
           ok|=2;
         break;
       }
+      case MPOOL_ATTRIBUTE_USESYSTEMPOOL:
+        {
+          struct mpool_attribute_usesystempool *a=(struct mpool_attribute_usesystempool *) *attributes;
+          /* Instant fail */
+          a->error=EACCES;
+          ok|=4;
+          break;
+        }
     default:
       {
         (*attributes)->error=ENOENT;
@@ -300,12 +324,16 @@ FORCEINLINE N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, 
     else if(!ptrs[n]) /* malloc */
     {
 #ifdef WIN32
-      if(!(ptrs[n]=VirtualAlloc(NULL, sizes[n], MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)))
+      DWORD vaflags=MEM_RESERVE|MEM_COMMIT;
+      if(flags & MPOOL_HIGH_ADDR) vaflags|=MEM_TOP_DOWN;
+      if(!(ptrs[n]=VirtualAlloc(NULL, sizes[n], vaflags, PAGE_READWRITE)))
       {
         if(errnos) errnos[n]=EINVAL;
       }
 #else
-      if(!(ptrs[n]=mmap(NULL, sizes[n], PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)))
+      int vaflags=MAP_PRIVATE|MAP_ANONYMOUS;
+      if(flags & MPOOL_HIGH_ADDR) vaflags|=MAP_GROWSDOWN;
+      if(!(ptrs[n]=mmap(NULL, sizes[n], PROT_READ|PROT_WRITE, vaflags, -1, 0)))
       {
         if(errnos) errnos[n]=errno;
       }
