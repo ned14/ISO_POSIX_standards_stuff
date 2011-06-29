@@ -39,6 +39,7 @@ DEALINGS IN THE SOFTWARE.
 #include <unistd.h>
 #endif
 #include "../nedtries/nedtrie.h"
+#include "../N1572/c1x_compat.h"
 
 #define BLOCKMETADATASTORAGECHUNK 65536
 
@@ -53,6 +54,7 @@ static size_t AlignmentsAndRoundings[]={
 };
 
 /* Set up the blockmetadata indexing */
+static mtx_t staticdatalock;
 typedef struct blockmetadata_s blockmetadata_t;
 struct blockmetadata_s
 {
@@ -113,6 +115,7 @@ static blockmetadata_t *NewBlockMetaData(void)
 static void FreeBlockMetaData(blockmetadata_t *bmd)
 {
   bmd->block=freeblockmetadata;
+  bmd->size=0;
   freeblockmetadata=bmd;
 }
 
@@ -170,6 +173,7 @@ int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT r
 #else
     AlignmentsAndRoundings[0]=getpagesize();
 #endif
+    mtx_init(&staticdatalock, mtx_plain);
     NEDTRIE_INIT(&blockmetadata_tree);
     NewBlockMetaDataStorage();
   }
@@ -282,6 +286,7 @@ FORCEINLINE N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, 
   if((mpool) m!=pool) return 0;
   /* We also don't support ptrs being null */
   if(!ptrs) return 0;
+  mtx_lock(&staticdatalock);
   for(n=0; n<maxn; n++)
   {
     if(ptrs[n])
@@ -326,13 +331,15 @@ FORCEINLINE N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, 
 #ifdef WIN32
       DWORD vaflags=MEM_RESERVE|MEM_COMMIT;
       if(flags & MPOOL_HIGH_ADDR) vaflags|=MEM_TOP_DOWN;
+      sizes[n]=(sizes[n]+AlignmentsAndRoundings[0]-1) & ~(AlignmentsAndRoundings[0]-1);
       if(!(ptrs[n]=VirtualAlloc(NULL, sizes[n], vaflags, PAGE_READWRITE)))
       {
-        if(errnos) errnos[n]=EINVAL;
+        if(errnos) errnos[n]=ENOMEM;
       }
 #else
       int vaflags=MAP_PRIVATE|MAP_ANONYMOUS;
       if(flags & MPOOL_HIGH_ADDR) vaflags|=MAP_GROWSDOWN;
+      sizes[n]=(sizes[n]+AlignmentsAndRoundings[0]-1) & ~(AlignmentsAndRoundings[0]-1);
       if(!(ptrs[n]=mmap(NULL, sizes[n], PROT_READ|PROT_WRITE, vaflags, -1, 0)))
       {
         if(errnos) errnos[n]=errno;
@@ -340,17 +347,32 @@ FORCEINLINE N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, 
 #endif
       else
       {
-        bmd=NewBlockMetaData();
-        bmd->block=ptrs[n];
-        bmd->size=sizes[n];
-        NEDTRIE_INSERT(blockmetadata_tree_s, &blockmetadata_tree, bmd);
-        _count++;
+        if(!(bmd=NewBlockMetaData()))
+        {
+#ifdef WIN32
+          if(errnos) errnos[n]=ENOMEM;
+          VirtualFree(ptrs[n], 0, MEM_RELEASE);
+#else
+          if(errnos) errnos[n]=errno;
+          munmap(ptrs[n], sizes[n]);
+#endif
+          ptrs[n]=0;
+        }
+        else
+        {
+          bmd->block=ptrs[n];
+          bmd->size=sizes[n];
+          NEDTRIE_INSERT(blockmetadata_tree_s, &blockmetadata_tree, bmd);
+          _count++;
+        }
       }
     }
     else /* realloc */
     {
       void *temp=0;
-      size_t tocopy=(sizes[n]<bmd->size) ? sizes[n] : bmd->size;
+      size_t tocopy;
+      sizes[n]=(sizes[n]+AlignmentsAndRoundings[0]-1) & ~(AlignmentsAndRoundings[0]-1);
+      tocopy=(sizes[n]<bmd->size) ? sizes[n] : bmd->size;
 #ifdef __linux__
       if(!(temp=mremap(ptrs[n], bmd->size, sizes[n], (flags & MPOOL_PREVENT_MOVE) ? 0 : MREMAP_MAYMOVE)))
       {
@@ -369,11 +391,10 @@ FORCEINLINE N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, 
       }
       else
       {
-        void *temp;
 #ifdef WIN32
         if(!(temp=VirtualAlloc(NULL, sizes[n], MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)))
         {
-          if(errnos) errnos[n]=EINVAL;
+          if(errnos) errnos[n]=ENOMEM;
         }
 #else
         if(!(temp=mmap(NULL, sizes[n], PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)))
@@ -408,7 +429,7 @@ FORCEINLINE N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, 
       }
     }
   }
-
+  mtx_unlock(&staticdatalock);
   *count=_count;
   return ptrs;
 }     

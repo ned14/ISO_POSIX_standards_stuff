@@ -133,15 +133,65 @@ void* kernel_direct_mmap(void *kad, size_t size)
 int kernel_munmap(void *kad, void* ptr, size_t size)
 {
   mpool kp=(mpool) kad;
-  mpool_free(kp, ptr);
+  char *cptr=(char *) ptr;
+  size_t regionsize;
+  /* dlmalloc assumes that specifying a size spanning multiple mmaps
+  does free any covered - just like munmap, but not VirtualFree. Hence we
+  have to walk the region specified */
+  regionsize=mpool_usable_size(kp, cptr);
+  if(!regionsize)
+  { // dlmalloc can try unmapping an offset into a map. Works on POSIX, not here!
+    return -1;
+  }
+  while(size)
+  {
+    assert(size-regionsize<size);
+    if(size-regionsize>size) return -1; // Non-mmap aligned free
+    if(!regionsize) return -1;
+    mpool_free(kp, cptr);
+    cptr+=regionsize;
+    size-=regionsize;
+    regionsize=mpool_usable_size(kp, cptr);
+  }
   return 0;
 }
 void* kernel_mremap(void *kad, void* ptr, size_t oldsize, size_t newsize, int flags)
 {
   mpool kp=(mpool) kad;
   size_t count=1;
-  mpool_batch(kp, NULL, &ptr, &newsize, &count, (flags & 1 /* MREMAP_MAYMOVE */) ? MPOOL_PREVENT_MOVE : 0);
-  assert(count);
+  char *cptr=(char *) ptr;
+  size_t regionsize;
+#ifdef WIN32
+  return MFAIL; // Always fail on Windows
+#endif
+  assert((regionsize=mpool_usable_size(kp, ptr)));
+  /* Similarly to kernel_munmap, dlmalloc assumes that a collection of mmaps
+  may be resized. Kinda annoying it doesn't appear to resize-to-grow, only
+  resize-to-shrink for the non-direct mmap case */
+  if(newsize>oldsize)
+  { // Take the last mmap and enlarge in place
+    size_t size;
+    for(size=oldsize; size; cptr+=(regionsize=mpool_usable_size(kp, cptr)), size-=regionsize);
+    cptr-=regionsize;
+    newsize-=oldsize;
+    mpool_batch(kp, NULL, (void **) &cptr, &newsize, &count, MPOOL_PREVENT_MOVE);
+  }
+  else if(newsize<oldsize)
+  { // Free any mmaps after the mmap where newsize lies and resize
+    size_t size;
+    for(size=0; size<newsize; cptr+=(regionsize=mpool_usable_size(kp, cptr)), size+=regionsize);
+    if(oldsize>size)
+    {
+      if(-1==kernel_munmap(kp, cptr, oldsize-size)) return MFAIL;
+    }
+    if(size>newsize)
+    {
+      cptr-=regionsize;
+      size-=regionsize;
+      newsize-=size;
+      mpool_batch(kp, NULL, (void **) &cptr, &newsize, &count, MPOOL_PREVENT_MOVE);
+    }
+  }
   return !count ? MFAIL : ptr;
 }
 

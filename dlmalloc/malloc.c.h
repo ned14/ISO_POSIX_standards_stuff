@@ -1664,7 +1664,11 @@ static FORCEINLINE void* win32direct_mmap(size_t size) {
   return (ptr != 0)? ptr: MFAIL;
 }
 
-/* This function supports releasing coalesed segments */
+/* This function supports releasing coalesed segments. Note that
+POSIX munmap() can be called on an offset into a previously mmap()ed
+section and dlmalloc expects munmap() to truncate the length of that
+section - this we don't support here as we have no way of resizing
+VA sections on win32. */
 static FORCEINLINE int win32munmap(void* ptr, size_t size) {
   MEMORY_BASIC_INFORMATION minfo;
   char* cptr = (char*)ptr;
