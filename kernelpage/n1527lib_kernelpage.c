@@ -120,7 +120,7 @@ static void FreeBlockMetaData(blockmetadata_t *bmd)
 }
 
 static int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes);
-static mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool);
+static mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool, int (*vanotify)(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count));
 static void destroypool(mpool pool);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_calloc(mpool pool, size_t nmemb, size_t size);
@@ -195,7 +195,7 @@ int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT r
           { /* Instant fail */
             return INT_MIN;
           }
-          score+=AlignmentsAndRoundings[0];
+          score+=(int) AlignmentsAndRoundings[0];
           break;
         }
       case MPOOL_ATTRIBUTE_SIZEROUNDING:
@@ -205,7 +205,7 @@ int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT r
           { /* Instant fail */
             return INT_MIN;
           }
-          score+=AlignmentsAndRoundings[0];
+          score+=(int) AlignmentsAndRoundings[0];
           break;
         }
       case MPOOL_ATTRIBUTE_USESYSTEMPOOL:
@@ -220,7 +220,7 @@ int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT r
   return score;
 }
 
-mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool)
+mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool, int (*vanotify)(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count))
 { /* The kernelpage allocator is a little unusual - it only has one pool! */
   struct mpool_s *m=&kernelpagepool;
   int ok=0;

@@ -29,11 +29,13 @@ DEALINGS IN THE SOFTWARE.
 */
 
 #include "n1527lib.h"
+#include "nedtries/nedtrie.h"
 #include "N1572/c1x_compat.h"
 #include <errno.h>
 
 #define MAX_ALLOCATORS 8
 #define MAX_POOLS 64
+#define POOLREGIONSTORAGECHUNK 65536
 
 static mtx_t staticdatalock;
 static struct allocator_s
@@ -65,9 +67,79 @@ static struct mpool_attribute_data *dlmalloc_allocator_attributes[]= {
   (struct mpool_attribute_data *) &dlmalloc_allocator_sizerounding,
   0
 };
+
+static mtx_t poolregionlock;
+typedef struct poolregion_s poolregion_t;
+struct poolregion_s
+{
+  NEDTRIE_ENTRY(poolregion_s) link;
+  char *addr;
+  size_t size;
+  mpool pool;
+};
+typedef struct poolregion_tree_s poolregion_tree_t;
+NEDTRIE_HEAD(poolregion_tree_s, poolregion_t);
+static poolregion_tree_t poolregion_tree;
+static size_t poolregionkeyfunct(const poolregion_t *r)
+{
+  return (size_t)-1-(size_t) r->addr; // Sort highest to lowest, so nfind finds the nearest lowest address
+}
+NEDTRIE_GENERATE(static, poolregion_tree_s, poolregion_s, link, poolregionkeyfunct, NEDTRIE_NOBBLEZEROS(poolregion_tree_s));
+static int vanotify(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count);
+/* Set up the poolregion storage */
+typedef struct poolregionstorage_s poolregionstorage_t;
+struct poolregionstorage_s
+{
+  poolregionstorage_t *next;
+  poolregion_t storage[(POOLREGIONSTORAGECHUNK-sizeof(void *))/sizeof(poolregion_t)];
+};
+static poolregionstorage_t *poolregionstorage;
+static poolregion_t *freepoolregion;
+static int NewPoolRegionStorage(void)
+{
+  poolregionstorage_t *storage;
+  size_t n;
+#ifdef WIN32
+  if(!(storage=VirtualAlloc(NULL, POOLREGIONSTORAGECHUNK, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE)))
+    return 0;
+#else
+  if(!(storage=mmap(NULL, POOLREGIONSTORAGECHUNK, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)))
+    return 0;
+#endif
+  storage->next=poolregionstorage;
+  poolregionstorage=storage;
+  for(n=0; n<sizeof(storage->storage)/sizeof(poolregion_t); n++)
+  {
+    poolregion_t *item=&storage->storage[n];
+    item->addr=freepoolregion;
+    freepoolregion=item;
+  }
+  return 1;
+}
+static poolregion_t *NewPoolRegion(void)
+{
+  poolregion_t *ret;
+  if(!freepoolregion)
+  {
+    if(!NewPoolRegionStorage())
+      return 0;
+  }
+  ret=freepoolregion;
+  freepoolregion=(poolregion_t *) freepoolregion->addr;
+  return ret;
+}
+static void FreePoolRegion(poolregion_t *bmd)
+{
+  bmd->addr=freepoolregion;
+  bmd->size=0;
+  freepoolregion=bmd;
+}
+
 static void initialise_static_data(void)
 {
   mtx_init(&staticdatalock, mtx_plain);
+  mtx_init(&poolregionlock, mtx_plain);
+  NEDTRIE_INIT(&poolregion_tree);
   // Bootstrap into existence by firing up the kernel page allocator then dlmalloc
   allocators[0].APIset=kernelpage_allocator_APIset();
   allocators[1].APIset=dlmalloc_allocator_APIset();
@@ -78,7 +150,7 @@ static void initialise_static_data(void)
   // Instantiate kernel page allocator
   pools[1].allocator=&allocators[0];
   pools[1].attributes=kernelpage_allocator_attributes;
-  if(!(pools[1].pool=pools[1].allocator->APIset.createpool(kernelpage_allocator_attributes, pools[1].pool)))
+  if(!(pools[1].pool=pools[1].allocator->APIset.createpool(kernelpage_allocator_attributes, pools[1].pool, vanotify)))
   {
     abort();
   }
@@ -90,11 +162,98 @@ static void initialise_static_data(void)
   // Instantiate dlmalloc
   pools[0].allocator=&allocators[1];
   pools[0].attributes=dlmalloc_allocator_attributes;
-  if(!(pools[0].pool=pools[0].allocator->APIset.createpool(dlmalloc_allocator_attributes, pools[1].pool)))
+  if(!(pools[0].pool=pools[0].allocator->APIset.createpool(dlmalloc_allocator_attributes, pools[1].pool, vanotify)))
   {
     abort();
   }
   pools[0].count=-1;
+}
+
+static int vanotify(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count)
+{
+  size_t n;
+  poolregion_t foo={0}, *pr;
+  mtx_lock(&poolregionlock);
+  for(n=0; n<count; n++)
+  {
+    char *addr=(char *) ptrs[n];
+    foo.addr=addr;
+    pr=NEDTRIE_NFIND(poolregion_tree_s, &poolregion_tree, &foo);
+    if(pr && pr->pool!=pool) pr=0;
+    if(!newsizes || !newsizes[n])
+    { // Delete or truncate region
+      assert(pr);
+      if(pr)
+      {
+        assert(addr>=pr->addr && addr<pr->addr+pr->size);
+        if(addr>=pr->addr && addr+oldsizes[n]<=pr->addr+pr->size)
+        {
+          if(addr==pr->addr)
+          { // Delete or shrink
+            NEDTRIE_REMOVE(poolregion_tree_s, &poolregion_tree, pr);
+            if(oldsizes[n]==pr->size)
+            { // Delete completely
+              FreePoolRegion(pr);
+              continue;
+            }
+            pr->size-=oldsizes[n];
+            pr->addr+=oldsizes[n];
+            NEDTRIE_INSERT(poolregion_tree_s, &poolregion_tree, pr);
+            continue;
+          }
+          else if(addr+oldsizes[n]==pr->addr+pr->size)
+          { // Truncate
+            pr->size=addr-pr->addr;
+            continue;
+          }
+          else abort();
+        }
+        else abort();
+      }
+      else abort();
+    }
+    else if(!oldsizes || !oldsizes[n])
+    { // Add or extend region
+      if(pr)
+      {
+        if(addr==pr->addr+pr->size)
+        { // Extend
+          pr->size=addr+newsizes[n]-pr->addr;
+          continue;
+        }
+        else if(addr>pr->addr+pr->size)
+        { // Need a new pool region
+        }
+        else abort();
+      }
+      if(!(pr=NewPoolRegion()))
+      {
+        mtx_unlock(&staticdatalock);
+        return 0;
+      }
+      pr->addr=addr;
+      pr->size=newsizes[n];
+      pr->pool=pool;
+      NEDTRIE_INSERT(poolregion_tree_s, &poolregion_tree, pr);
+      continue;
+    }
+    else
+    { // Resize a region
+      assert(pr);
+      if(pr)
+      {
+        if(addr==pr->addr+pr->size)
+        {
+          pr->size=addr+newsizes[n]-pr->addr;
+          continue;
+        }
+        else abort();
+      }
+      else abort();
+    }
+  }
+  mtx_unlock(&poolregionlock);
+  return 1;
 }
 
 size_t mpool_minimum_roundings(size_t roundings[], size_t size)
@@ -195,7 +354,7 @@ mpool mpool_obtain(struct mpool_attribute_data **attributes)
       errno=ENOMEM;
       return NULL;
     }
-    if((pools[n].pool=scores[maxidx].allocator->APIset.createpool(attributes, pools[1].pool)))
+    if((pools[n].pool=scores[maxidx].allocator->APIset.createpool(attributes, pools[1].pool, vanotify)))
     {
       pools[n].allocator=scores[maxidx].allocator;
       pools[n].attributes=attributes;

@@ -57,6 +57,7 @@ static void* kernel_mremap(void *kad, void* ptr, size_t oldsize, size_t newsize,
 struct mpool_s {
   struct mpool_APIset *APIset;   /* This HAS to be here! */
   mspace ms;
+  mpool systempool;
   uintmax_t flags;
   size_t alignment;
   size_t sizerounding;
@@ -71,7 +72,7 @@ static size_t dlmalloc_roundings[]={
 };
 
 static int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes);
-static mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool);
+static mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool, int (*vanotify)(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count));
 static void destroypool(mpool pool);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void **_batch(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
 static N1527MALLOCNOALIASATTR N1527MALLOCPTRATTR void *_calloc(mpool pool, size_t nmemb, size_t size);
@@ -94,6 +95,7 @@ static struct mpool_APIset dlmalloc_apiset = {
   _usable_size,
   _ownerpool,
 };
+static int (*vanotify)(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count);
 
 #ifdef _MSC_VER
 __declspec(dllexport)
@@ -115,30 +117,45 @@ N1527MALLOCEXTSPEC mspace get_dlmalloc_mspace(mpool pool)
 
 void* kernel_mmap(void *kad, size_t size)
 {
-  void *ret;
-  mpool kp=(mpool) kad;
-  ret=mpool_malloc(kp, size);
-  assert(ret);
-  return !ret ? MFAIL : ret;
+  struct mpool_s *me=(struct mpool_s *) kad;
+  void *ret=0;
+  size_t count=1;
+  mpool_batch(me->systempool, NULL, &ret, &size, &count, 0);
+  if(count)
+  {
+    if(!vanotify(me, me->systempool, &ret, NULL, &size, count))
+    {
+      mpool_batch(me->systempool, NULL, &ret, NULL, &count, 0);
+      return MFAIL;
+    }
+  }
+  return !count ? MFAIL : ret;
 }
 void* kernel_direct_mmap(void *kad, size_t size)
 {
-  mpool kp=(mpool) kad;
+  struct mpool_s *me=(struct mpool_s *) kad;
   void *ret=0;
   size_t count=1;
-  mpool_batch(kp, NULL, &ret, &size, &count, MPOOL_HIGH_ADDR);
-  assert(count);
+  mpool_batch(me->systempool, NULL, &ret, &size, &count, MPOOL_HIGH_ADDR);
+  if(count)
+  {
+    if(!vanotify(me, me->systempool, &ret, NULL, &size, count))
+    {
+      mpool_batch(me->systempool, NULL, &ret, NULL, &count, 0);
+      return MFAIL;
+    }
+  }
   return !count ? MFAIL : ret;
 }
 int kernel_munmap(void *kad, void* ptr, size_t size)
 {
-  mpool kp=(mpool) kad;
+  struct mpool_s *me=(struct mpool_s *) kad;
   char *cptr=(char *) ptr;
   size_t regionsize;
   /* dlmalloc assumes that specifying a size spanning multiple mmaps
   does free any covered - just like munmap, but not VirtualFree. Hence we
   have to walk the region specified */
-  regionsize=mpool_usable_size(kp, cptr);
+  regionsize=mpool_usable_size(me->systempool, cptr);
   if(!regionsize)
   { // dlmalloc can try unmapping an offset into a map. Works on POSIX, not here!
     return -1;
@@ -148,48 +165,54 @@ int kernel_munmap(void *kad, void* ptr, size_t size)
     assert(size-regionsize<size);
     if(size-regionsize>size) return -1; // Non-mmap aligned free
     if(!regionsize) return -1;
-    mpool_free(kp, cptr);
+    mpool_free(me->systempool, cptr);
+    vanotify(me, me->systempool, (void **) &cptr, &regionsize, NULL, 1);
     cptr+=regionsize;
     size-=regionsize;
-    regionsize=mpool_usable_size(kp, cptr);
+    regionsize=mpool_usable_size(me->systempool, cptr);
   }
   return 0;
 }
 void* kernel_mremap(void *kad, void* ptr, size_t oldsize, size_t newsize, int flags)
 {
-  mpool kp=(mpool) kad;
+  struct mpool_s *me=(struct mpool_s *) kad;
   size_t count=1;
   char *cptr=(char *) ptr;
   size_t regionsize;
 #ifdef WIN32
   return MFAIL; // Always fail on Windows
 #endif
-  assert((regionsize=mpool_usable_size(kp, ptr)));
+  assert((regionsize=mpool_usable_size(me->systempool, ptr)));
   /* Similarly to kernel_munmap, dlmalloc assumes that a collection of mmaps
   may be resized. Kinda annoying it doesn't appear to resize-to-grow, only
   resize-to-shrink for the non-direct mmap case */
   if(newsize>oldsize)
   { // Take the last mmap and enlarge in place
     size_t size;
-    for(size=oldsize; size; cptr+=(regionsize=mpool_usable_size(kp, cptr)), size-=regionsize);
+    for(size=0; size<oldsize; cptr+=(regionsize=mpool_usable_size(me->systempool, cptr)), size+=regionsize);
     cptr-=regionsize;
-    newsize-=oldsize;
-    mpool_batch(kp, NULL, (void **) &cptr, &newsize, &count, MPOOL_PREVENT_MOVE);
+    size-=regionsize;
+    newsize-=size;
+    mpool_batch(me->systempool, NULL, (void **) &cptr, &newsize, &count, MPOOL_PREVENT_MOVE);
+    if(count)
+      vanotify(me, me->systempool, (void **) &cptr, &regionsize, &newsize, count);
   }
   else if(newsize<oldsize)
   { // Free any mmaps after the mmap where newsize lies and resize
     size_t size;
-    for(size=0; size<newsize; cptr+=(regionsize=mpool_usable_size(kp, cptr)), size+=regionsize);
+    for(size=0; size<newsize; cptr+=(regionsize=mpool_usable_size(me->systempool, cptr)), size+=regionsize);
     if(oldsize>size)
     {
-      if(-1==kernel_munmap(kp, cptr, oldsize-size)) return MFAIL;
+      if(-1==kernel_munmap(me->systempool, cptr, oldsize-size)) return MFAIL;
     }
     if(size>newsize)
     {
       cptr-=regionsize;
       size-=regionsize;
       newsize-=size;
-      mpool_batch(kp, NULL, (void **) &cptr, &newsize, &count, MPOOL_PREVENT_MOVE);
+      mpool_batch(me->systempool, NULL, (void **) &cptr, &newsize, &count, MPOOL_PREVENT_MOVE);
+      if(count)
+        vanotify(me, me->systempool, (void **) &cptr, &regionsize, &newsize, count);
     }
   }
   return !count ? MFAIL : ptr;
@@ -207,10 +230,11 @@ int rateattributes(const size_t *RESTRICT alignments[], const size_t *RESTRICT r
   return 0;
 }
 
-mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool)
+mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool systempool, int (*vanotify_)(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count))
 {
   mspace ms;
-  struct mpool_s *m;
+  struct mpool_s temp={0}, *m;
+  if(!vanotify) vanotify=vanotify_;
   if(attributes)
   {
     struct mpool_attribute_data **RESTRICT _attributes=attributes;
@@ -227,7 +251,9 @@ mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool system
       }
     }
   }
-  if((ms=create_mspace(0, 1, systempool)))
+  // Fake a struct mpool_s for bootstrapping
+  temp.systempool=systempool;
+  if((ms=create_mspace(0, 1, &temp)))
   {
     if(!(m=(struct mpool_s *) mspace_calloc(ms, 1, sizeof(struct mpool_s))))
     {
@@ -236,6 +262,8 @@ mpool createpool(struct mpool_attribute_data **RESTRICT attributes, mpool system
     }
     m->APIset=&dlmalloc_apiset;
     m->ms=ms;
+    m->systempool=systempool;
+    ((mstate)ms)->kernelallocatordata=m;
     if(attributes)
     {
       for(; *attributes; attributes++)

@@ -196,7 +196,7 @@ inline int mpool_attribute_usesystempool_compare(const struct mpool_attribute_da
 /*! \brief Defines an allocator API set */
 struct mpool_APIset {
   int (*rateattributes)(const size_t *RESTRICT alignments[], const size_t *RESTRICT roundings[], const struct mpool_attribute_data **RESTRICT attributes); //!< Scores a set of attributes. Higher is better.
-  mpool (*createpool)(struct mpool_attribute_data **RESTRICT attributes, mpool systempool);         //!< Creates a pool
+  mpool (*createpool)(struct mpool_attribute_data **RESTRICT attributes, mpool systempool, int (*vanotify)(mpool pool, mpool systempool, void **ptrs, size_t *RESTRICT oldsizes, size_t *RESTRICT newsizes, size_t count));         //!< Creates a pool
   void (*destroypool)(mpool pool);                                                                  //!< Destroys a pool
   void **(*batch)(mpool pool, int *errnos, void **ptrs, size_t *RESTRICT sizes, size_t *RESTRICT count, uintmax_t flags);
   void *(*calloc)(mpool pool, size_t nmemb, size_t size);
