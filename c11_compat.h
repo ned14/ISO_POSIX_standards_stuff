@@ -33,9 +33,12 @@ DEALINGS IN THE SOFTWARE.
 
 #include <stdlib.h>
 #include <errno.h>
-#if __STDC_VERSION__ > 200000L || defined(__GNUC__)
+#if __STDC_VERSION__ > 200000L
 #include <stdatomic.h>
 #include <threads.h>
+#elif defined(__GNUC__) || defined(__clang__)
+#include "c11_atomics_and_threads_gcc_clang/stdatomic.h"
+#include "c11_atomics_and_threads_gcc_clang/threads.h"
 #else
 
 #ifdef _MSC_VER
@@ -236,11 +239,51 @@ struct timespec
 typedef CONDITION_VARIABLE cnd_t;
 typedef SRWLOCK mtx_t;
 
+#define TIME_UTC 1
+inline int timespec_get(struct timespec *ts, int base)
+{
+	static LARGE_INTEGER ticksPerSec;
+	static double scalefactor;
+	LARGE_INTEGER val;
+	if(!scalefactor)
+	{
+		if(QueryPerformanceFrequency(&ticksPerSec))
+			scalefactor=ticksPerSec.QuadPart/1000000000.0;
+		else
+			scalefactor=1;
+	}
+	if(!QueryPerformanceCounter(&val))
+  {
+    DWORD now=GetTickCount();
+    ts->tv_sec=now/1000;
+    ts->tv_nsec=(now%1000)*1000000;
+    return base;
+  }
+  unsigned long long now=(unsigned long long)(val.QuadPart/scalefactor);
+  ts->tv_sec=now/1000000000;
+  ts->tv_nsec=now%1000000000;
+  return base;
+}
+inline long long timespec_diff(const struct timespec *end, const struct timespec *start)
+{
+  long long ret=end->tv_sec-start->tv_sec;
+  ret*=1000000000;
+  ret+=end->tv_nsec-start->tv_nsec;
+  return ret;
+}
+
 inline int cnd_broadcast(cnd_t *cond) { WakeAllConditionVariable(cond); return thrd_success; }
 inline void cnd_destroy(cnd_t *cond) { }
 inline int cnd_init(cnd_t *cond) { InitializeConditionVariable(cond); return thrd_success; }
 inline int cnd_signal(cnd_t *cond) { WakeConditionVariable(cond); return thrd_success; }
-inline int cnd_timedwait(cnd_t *RESTRICT cond, mtx_t *RESTRICT mtx, const struct timespec *RESTRICT ts);
+inline int cnd_timedwait(cnd_t *RESTRICT cond, mtx_t *RESTRICT mtx, const struct timespec *RESTRICT ts)
+{
+  struct timespec now;
+  DWORD interval;
+  timespec_get(&now, TIME_UTC);
+  interval=(DWORD)(timespec_diff(ts, &now)/1000000);
+  return SleepConditionVariableSRW(cond, mtx, interval, 0) ? thrd_success : thrd_timeout;
+}
 inline int cnd_wait(cnd_t *cond, mtx_t *mtx) { return SleepConditionVariableSRW(cond, mtx, INFINITE, 0) ? thrd_success : thrd_timeout; }
 
 inline void mtx_destroy(mtx_t *mtx) { }
