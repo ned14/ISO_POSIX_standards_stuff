@@ -72,7 +72,7 @@
     <ClCompile Include="test_permit.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\c1x_compat.h" />
+    <ClInclude Include="..\c11_compat.h" />
     <ClInclude Include="..\timing.h" />
     <ClInclude Include="pthread_permit.h" />
   </ItemGroup>

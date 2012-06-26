@@ -1,6 +1,6 @@
 /* c1x_compat.h
-Declares and defines stuff from C1X
-(C) 2011 Niall Douglas http://www.nedproductions.biz/
+Declares and defines stuff from C11
+(C) 2011-2012 Niall Douglas http://www.nedproductions.biz/
 
 
 Boost Software License - Version 1.0 - August 17th, 2003
@@ -28,8 +28,8 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#ifndef C1X_COMPAT_H
-#define C1X_COMPAT_H
+#ifndef C11_COMPAT_H
+#define C11_COMPAT_H
 
 #include <stdlib.h>
 #if __STDC_VERSION__ > 200000L || defined(__GNUC__)
