@@ -1,9 +1,20 @@
 /* test_permit.c
 Tests the proposed C1X permit object
-(C) 2011 Niall Douglas http://www.nedproductions.biz/
+(C) 2011-2012 Niall Douglas http://www.nedproductions.biz/
 
 
 On a 2.67Ghz Intel Core 2 Quad:
+
+Simple permit1:
+
+Uncontended grant time: 48 cycles
+Uncontended revoke time: 0 cycles
+Uncontended wait time: 142 cycles
+
+1 contended grant time: 725 cycles (359 without revoke)
+1 contended revoke time: 4 cycles
+1 contended wait time: 1044 cycles (372 without revoke)
+
 
 DoConsume:
 
@@ -27,20 +38,20 @@ Uncontended wait time: 137 cycles
 1 contended wait time: 887 cycles
 */
 
-#include "c1x_notifier.h"
-#include "timing.h"
+#include "pthread_permit.h"
+#include "../timing.h"
 #include <stdio.h>
 
 #define THREADS 2
 #define CYCLESPERMICROSECOND (2.67*1000000000/1000000000000)
-#define DONTCONSUME 1
-// Define to test uncontended, set to what to exclude
+#define DONTCONSUME 0
+// Define to test uncontended, set to what to exclude (0=test permit_wait, 1=test permit_revoke/permit_grant)
 #define UNCONTENDED 0
 
 static usCount timingoverhead;
 static thrd_t threads[THREADS];
 static volatile int done;
-static permit_t permit;
+static void *permitaddr;
 
 void sleep(long ms)
 {
@@ -50,9 +61,10 @@ void sleep(long ms)
   thrd_sleep(&ts, NULL);
 }
 
-int threadfunc(void *mynum)
+template<typename permit_t, int (*permit_grant)(pthread_permitX_t), void (*permit_revoke)(permit_t *), int(*permit_wait)(permit_t *, mtx_t *mtx)> int threadfunc(void *mynum)
 {
   size_t mythread=(size_t) mynum;
+  permit_t *permit=(permit_t *)permitaddr;
   usCount start, end;
   size_t count=0;
 #ifdef UNCONTENDED
@@ -63,23 +75,25 @@ int threadfunc(void *mynum)
     usCount revoketotal=0, granttotal=0;
     while(!done)
     {
+#if DONTCONSUME
       // Revoke permit
       start=GetUsCount();
-      permit_revoke(&permit);
+      permit_revoke(permit);
       end=GetUsCount();
       revoketotal+=end-start-timingoverhead;
       //printf("Thread %u revoked permit\n", mythread);
+#endif
       //sleep(1000);
       //printf("\nThread %u granting permit\n", mythread);
       start=GetUsCount();
-      permit_grant(&permit);
+      permit_grant(permit);
       end=GetUsCount();
       granttotal+=end-start-timingoverhead;
       //sleep(1);
       count++;
     }
     printf("Thread %u, average revoke/grant time was %u/%u cycles\n", mythread, (size_t)((double)revoketotal/count*CYCLESPERMICROSECOND), (size_t)((double)granttotal/count*CYCLESPERMICROSECOND));
-    permit_grant(&permit);
+    permit_grant(permit);
   }
   else
   {
@@ -91,7 +105,7 @@ int threadfunc(void *mynum)
     {
       // Wait on permit
       start=GetUsCount();
-      permit_wait(&permit, &mtx);
+      permit_wait(permit, &mtx);
       end=GetUsCount();
       waittotal+=end-start-timingoverhead;
       count++;
@@ -99,7 +113,7 @@ int threadfunc(void *mynum)
 #if defined(UNCONTENDED) && 0==DONTCONSUME
       if(UNCONTENDED==0 && 1==mythread)
       {
-        permit_grant(&permit);
+        permit_grant(permit);
       }
 #endif
     }
@@ -112,7 +126,9 @@ int main(void)
 {
   int n;
   usCount start;
-  permit_init(&permit, DONTCONSUME, 1);
+  pthread_permit1_t permit1;
+  pthread_permit_t permit;
+
   printf("Press key to continue ...\n");
   getchar();
   printf("Wait ...\n");
@@ -126,9 +142,12 @@ int main(void)
   }
   timingoverhead/=5000000;
   printf("Timing overhead on this machine is %u us. Go!\n", timingoverhead);
+
+  pthread_permit1_init(&permit1, 1);
+  permitaddr=&permit1;
   for(n=0; n<THREADS; n++)
   {
-    thrd_create(&threads[n], threadfunc, (void *)(size_t)n);
+    thrd_create(&threads[n], (thrd_start_t) threadfunc<pthread_permit1_t, pthread_permit1_grant, pthread_permit1_revoke, pthread_permit1_wait>, (void *)(size_t)n);
   }
   printf("Press key to kill all\n");
   getchar();

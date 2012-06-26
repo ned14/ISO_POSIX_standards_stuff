@@ -1,7 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pthread_permit", "pthread_permit.vcxproj", "{B86C84C6-137C-8A7E-4DCF-AD6A0809656B}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pthread_permit_speedtest", "pthread_permit.vcxproj", "{B86C84C6-137C-8A7E-4DCF-AD6A0809656B}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "unittests", "unittests.vcxproj", "{C128138E-F644-4600-AF3F-72CF7955BDD7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -13,6 +15,10 @@ Global
 		{B86C84C6-137C-8A7E-4DCF-AD6A0809656B}.Debug|Win32.Build.0 = Debug|Win32
 		{B86C84C6-137C-8A7E-4DCF-AD6A0809656B}.Release|Win32.ActiveCfg = Release|Win32
 		{B86C84C6-137C-8A7E-4DCF-AD6A0809656B}.Release|Win32.Build.0 = Release|Win32
+		{C128138E-F644-4600-AF3F-72CF7955BDD7}.Debug|Win32.ActiveCfg = Debug|Win32
+		{C128138E-F644-4600-AF3F-72CF7955BDD7}.Debug|Win32.Build.0 = Debug|Win32
+		{C128138E-F644-4600-AF3F-72CF7955BDD7}.Release|Win32.ActiveCfg = Release|Win32
+		{C128138E-F644-4600-AF3F-72CF7955BDD7}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

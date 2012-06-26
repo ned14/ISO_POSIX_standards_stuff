@@ -32,6 +32,7 @@ DEALINGS IN THE SOFTWARE.
 #define C11_COMPAT_H
 
 #include <stdlib.h>
+#include <errno.h>
 #if __STDC_VERSION__ > 200000L || defined(__GNUC__)
 #include <stdatomic.h>
 #include <threads.h>
@@ -59,6 +60,10 @@ DEALINGS IN THE SOFTWARE.
 
 #ifndef RESTRICT
 #define RESTRICT
+#endif
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 typedef unsigned char _Bool;
@@ -108,6 +113,16 @@ inline void atomic_store_explicit(volatile atomic_uint *o, unsigned int v, memor
 {
   switch(order)
   {
+  case memory_order_relaxed:
+    *(atomic_uint *) o=v;
+    return;
+  case memory_order_acquire:
+  case memory_order_release:
+  case memory_order_acq_rel:
+  /* Both MSVC and GCC do the right thing when it's marked volatile and use acquire/release automatically */
+    *o=v;
+    return;
+  case memory_order_seq_cst:
   default:
     InterlockedExchange((volatile long *) o, (long) v);
     return;
@@ -115,8 +130,23 @@ inline void atomic_store_explicit(volatile atomic_uint *o, unsigned int v, memor
 }
 inline unsigned int atomic_load_explicit(volatile atomic_uint *o, memory_order order)
 {
-  /* Both MSVC and GCC do the right thing when it's marked volatile */
-  return *o;
+  switch(order)
+  {
+  case memory_order_relaxed:
+    return *(atomic_uint *) o;
+  case memory_order_acquire:
+  case memory_order_release:
+  case memory_order_acq_rel:
+  /* Both MSVC and GCC do the right thing when it's marked volatile and use acquire/release automatically */
+    return *o;
+  case memory_order_seq_cst:
+  default:
+    atomic_uint ret;
+    MemoryBarrier();
+    ret=*o;
+    MemoryBarrier();
+    return ret;
+  }
 }
 inline unsigned int atomic_exchange_explicit(volatile atomic_uint *o, unsigned int v, memory_order order)
 {
@@ -189,11 +219,11 @@ enum mtx_types
 };
 enum thrd_results
 {
-  thrd_success,
-  thrd_timeout,
-  thrd_busy,
-  thrd_error,
-  thrd_nomem
+  thrd_success=0,
+  thrd_timeout=ETIMEDOUT,
+  thrd_busy=EBUSY,
+  thrd_error=EINVAL,
+  thrd_nomem=ENOMEM
 };
 
 struct timespec
@@ -233,7 +263,7 @@ typedef uintptr_t thrd_t;
 
 inline int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
 {
-  *thr=_beginthread(func, 0, arg);
+  *thr=_beginthread((void (*)(void *)) func, 0, arg);
   return thrd_success;
 }
 inline int thrd_sleep(const struct timespec *duration, const struct timespec *remaining)
@@ -245,7 +275,12 @@ inline void thrd_yield(void)
 {
   Sleep(0);
 }
+
+#ifdef __cplusplus
+}
+#endif
 #endif
 
 #endif
 #endif
+

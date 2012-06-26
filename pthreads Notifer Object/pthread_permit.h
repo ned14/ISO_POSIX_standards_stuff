@@ -1,6 +1,6 @@
-/* c1x_notifier.h
+/* pthread_permit.h
 Declares and defines the proposed C1X semaphore object
-(C) 2011 Niall Douglas http://www.nedproductions.biz/
+(C) 2011-2012 Niall Douglas http://www.nedproductions.biz/
 
 
 Boost Software License - Version 1.0 - August 17th, 2003
@@ -28,62 +28,194 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#ifndef C1X_NOTIFIER_H
-#define C1X_NOTIFIER_H
-#include "c1x_compat.h"
+#ifndef PTHREAD_PERMIT_H
+#define PTHREAD_PERMIT_H
+#include "../c11_compat.h"
+typedef mtx_t pthread_mutex_t;
 #include <assert.h>
 
-/* Define the permit_t type */
-typedef struct permit_s
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*! Define the pthread_permit1_t type */
+typedef struct pthread_permit1_s pthread_permit1_t;
+
+/*! Define the pthread_permit_t type */
+typedef struct pthread_permit_s pthread_permit_t;
+
+/*! Define the pthread_permitX_t type - used to denote either a pthread_permit1_t or a pthread_permit_t type */
+typedef void *pthread_permitX_t;
+
+/*! Define the permit grant function prototype */
+typedef int (*pthread_permit_grant_func)(pthread_permitX_t);
+
+
+/*! Creates a permit1 with initial state. */
+inline int pthread_permit1_init(pthread_permit1_t *permit, _Bool initial);
+
+/*! Destroys a permit1 */
+inline void pthread_permit1_destroy(pthread_permit1_t *permit);
+
+/*! Grants permit to one waiting thread. If there is no waiting thread, permits the next waiting thread. */
+inline int pthread_permit1_grant(pthread_permitX_t permit);
+
+/*! Revoke any outstanding permit, causing any subsequent waiters to wait. */
+inline void pthread_permit1_revoke(pthread_permit1_t *permit);
+
+/*! Waits for permit to become available, atomically unlocking the specified mutex when waiting.
+If mtx is NULL, never sleeps instead looping forever waiting for permit. */
+inline int pthread_permit1_wait(pthread_permit1_t *permit, pthread_mutex_t *mtx);
+
+/*! Waits for a time for a permit to become available, atomically unlocking the specified mutex when waiting.
+If mtx is NULL, never sleeps instead looping forever waiting for permit. If ts is NULL,
+returns immediately instead of waiting.
+
+Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
+*/
+inline int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t *mtx, const struct timespec *ts);
+
+
+/*! Creates a permit with initial state. */
+inline int pthread_permit_init(pthread_permit_t *permit, _Bool waitersDontConsume, _Bool initial);
+
+/*! Destroys a permit */
+inline void pthread_permit_destroy(pthread_permit_t *permit);
+
+/*! Grants permit to all currently waiting threads. If there is no waiting thread, permits the next waiting thread. */
+inline int pthread_permit_grant(pthread_permitX_t permit);
+
+/*! Revoke any outstanding permit, causing any subsequent waiters to wait. */
+inline void pthread_permit_revoke(pthread_permit_t *permit);
+
+/*! Waits for permit to become available, atomically unlocking the specified mutex when waiting.
+If mtx is NULL, never sleeps instead looping forever waiting for permit. */
+inline int pthread_permit_wait(pthread_permit_t *permit, mtx_t *mtx);
+
+/*! Waits for a time for a permit to become available, atomically unlocking the specified mutex when waiting.
+If mtx is NULL, never sleeps instead looping forever waiting for permit. If ts is NULL,
+returns immediately instead of waiting.
+
+Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
+*/
+inline int pthread_permit_timedwait(pthread_permit_t *permit, mtx_t *mtx, const struct timespec *ts);
+
+
+
+
+
+typedef struct pthread_permit1_s
 {
-  int replacePermit;                  /* What to replace the permit with when consumed */
+  volatile unsigned magic;            /* Used to ensure this structure is valid */
   atomic_uint permit;                 /* =0 no permit, =1 yes permit */
   atomic_uint waiters, waited;        /* Keeps track of when a thread waits and wakes */
   cnd_t cond;                         /* Wakes anything waiting for a permit */
+} pthread_permit1_t;
+
+typedef struct pthread_permit_s
+{ /* NOTE: KEEP THIS HEADER THE SAME AS pthread_permit1_t */
+  volatile unsigned magic;            /* Used to ensure this structure is valid */
+  atomic_uint permit;                 /* =0 no permit, =1 yes permit */
+  atomic_uint waiters, waited;        /* Keeps track of when a thread waits and wakes */
+  cnd_t cond;                         /* Wakes anything waiting for a permit */
+
+  /* Extensions from pthread_permit1_t type */
+  int replacePermit;                  /* What to replace the permit with when consumed */
   atomic_uint lockWake;               /* Used to exclude new wakers if and only if waiters don't consume */
-} permit_t;
-
-/* Creates with whether waiters don't consume and initial state. */
-inline int permit_init(permit_t *permit, _Bool waitersDontConsume, _Bool initial);
-
-/* Destroys a permit */
-inline void permit_destroy(permit_t *permit);
-
-/* Grants permit to one or all waiting threads. */
-inline int permit_grant(permit_t *permit);
-
-/* Revoke any outstanding permit, causing any subsequent waiters to wait. */
-inline void permit_revoke(permit_t *permit);
-
-/* Waits for permit to become available, atomically unlocking the specified mutex when waiting.
-If mtx is NULL, never sleeps instead looping forever waiting for permit. */
-inline int permit_wait(permit_t *permit, mtx_t *mtx);
-
-/* Waits for a time for a permit to become available, atomically unlocking the specified mutex when waiting. */
-inline int permit_timedwait(permit_t *permit, mtx_t *mtx, const struct timespec *ts);
+} pthread_permit_t;
 
 
-
-
-inline int permit_init(permit_t *permit, _Bool waitersDontConsume, _Bool initial)
+int pthread_permit1_init(pthread_permit1_t *permit, _Bool initial)
 {
-  permit->replacePermit=waitersDontConsume;
   permit->permit=initial;
   permit->waiters=permit->waited=0;
   if(thrd_success!=cnd_init(&permit->cond)) return thrd_error;
+  permit->magic=*(const unsigned *)"1PER";
+  return thrd_success;
+}
+
+void pthread_permit1_destroy(pthread_permit1_t *permit)
+{
+  if(*(const unsigned *)"1PER"!=permit->magic) return;
+  /* Mark this object as invalid for further use */
+  permit->magic=0;
+  permit->permit=1;
+  cnd_destroy(&permit->cond);
+}
+
+int pthread_permit1_grant(pthread_permitX_t _permit)
+{
+  pthread_permit1_t *permit=(pthread_permit1_t *) _permit;
+  int ret=thrd_success;
+  if(*(const unsigned *)"1PER"!=permit->magic) return thrd_error;
+  // Grant permit
+  atomic_store_explicit(&permit->permit, 1, memory_order_seq_cst);
+  // Are there waiters on the permit?
+  if(atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed))
+  { // There are indeed waiters. Loop waking until at least one thread takes the permit
+    while(atomic_load_explicit(&permit->permit, memory_order_relaxed))
+    {
+      if(thrd_success!=cnd_signal(&permit->cond))
+      {
+        ret=thrd_error;
+        break;
+      }
+      //if(1==cpus) thrd_yield();
+    }
+  }
+  return ret;
+}
+
+void pthread_permit1_revoke(pthread_permit1_t *permit)
+{
+  if(*(const unsigned *)"1PER"!=permit->magic) return;
+  atomic_store_explicit(&permit->permit, 0, memory_order_relaxed);
+}
+
+int pthread_permit1_wait(pthread_permit1_t *permit, mtx_t *mtx)
+{
+  int ret=thrd_success;
+  unsigned expected;
+  if(*(const unsigned *)"1PER"!=permit->magic) return thrd_error;
+  // Increment the monotonic count to indicate we have entered a wait
+  atomic_fetch_add_explicit(&permit->waiters, 1, memory_order_acquire);
+  // Fetch me a permit
+  while((expected=1, !atomic_compare_exchange_weak_explicit(&permit->permit, &expected, 0, memory_order_relaxed, memory_order_relaxed)))
+  { // Permit is not granted, so wait if we have a mutex
+    if(mtx)
+    {
+      if(thrd_success!=cnd_wait(&permit->cond, mtx)) ret=thrd_error;
+    }
+    else thrd_yield();
+  }
+  // Increment the monotonic count to indicate we have exited a wait
+  atomic_fetch_add_explicit(&permit->waited, 1, memory_order_relaxed);
+  return ret;
+}
+
+
+
+
+int pthread_permit_init(pthread_permit_t *permit, _Bool waitersDontConsume, _Bool initial)
+{
+  permit->permit=initial;
+  permit->waiters=permit->waited=0;
+  if(thrd_success!=cnd_init(&permit->cond)) return thrd_error;
+  permit->replacePermit=waitersDontConsume;
   permit->lockWake=0;
   return thrd_success;
 }
 
-inline void permit_destroy(permit_t *permit)
+void pthread_permit_destroy(pthread_permit_t *permit)
 {
   permit->replacePermit=1;
   permit->permit=1;
   cnd_destroy(&permit->cond);
 }
 
-inline int permit_grant(permit_t *permit)
+int pthread_permit_grant(pthread_permitX_t _permit)
 { // If permits aren't consumed, prevent any new waiters or granters
+  pthread_permit_t *permit=(pthread_permit_t *) _permit;
   int ret=thrd_success;
   if(permit->replacePermit)
   {
@@ -130,12 +262,12 @@ exit:
   return ret;
 }
 
-inline void permit_revoke(permit_t *permit)
+void pthread_permit_revoke(pthread_permit_t *permit)
 {
   atomic_store_explicit(&permit->permit, 0, memory_order_relaxed);
 }
 
-inline int permit_wait(permit_t *permit, mtx_t *mtx)
+int pthread_permit_wait(pthread_permit_t *permit, mtx_t *mtx)
 {
   int ret=thrd_success;
   unsigned expected;
@@ -162,5 +294,9 @@ inline int permit_wait(permit_t *permit, mtx_t *mtx)
   return ret;
 }
 
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
