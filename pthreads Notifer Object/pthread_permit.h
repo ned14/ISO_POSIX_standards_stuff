@@ -90,7 +90,7 @@ inline void pthread_permit_revoke(pthread_permit_t *permit);
 
 /*! Waits for permit to become available, atomically unlocking the specified mutex when waiting.
 If mtx is NULL, never sleeps instead looping forever waiting for permit. */
-inline int pthread_permit_wait(pthread_permit_t *permit, mtx_t *mtx);
+inline int pthread_permit_wait(pthread_permit_t *permit, pthread_mutex_t *mtx);
 
 /*! Waits for a time for a permit to become available, atomically unlocking the specified mutex when waiting.
 If mtx is NULL, never sleeps instead looping forever waiting for permit. If ts is NULL,
@@ -98,7 +98,7 @@ returns immediately instead of waiting.
 
 Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
 */
-inline int pthread_permit_timedwait(pthread_permit_t *permit, mtx_t *mtx, const struct timespec *ts);
+inline int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts);
 
 
 
@@ -172,7 +172,7 @@ void pthread_permit1_revoke(pthread_permit1_t *permit)
   atomic_store_explicit(&permit->permit, 0, memory_order_relaxed);
 }
 
-int pthread_permit1_wait(pthread_permit1_t *permit, mtx_t *mtx)
+int pthread_permit1_wait(pthread_permit1_t *permit, pthread_mutex_t *mtx)
 {
   int ret=thrd_success;
   unsigned expected;
@@ -184,7 +184,36 @@ int pthread_permit1_wait(pthread_permit1_t *permit, mtx_t *mtx)
   { // Permit is not granted, so wait if we have a mutex
     if(mtx)
     {
-      if(thrd_success!=cnd_wait(&permit->cond, mtx)) ret=thrd_error;
+      if(thrd_success!=cnd_wait(&permit->cond, mtx)) { ret=thrd_error; break; }
+    }
+    else thrd_yield();
+  }
+  // Increment the monotonic count to indicate we have exited a wait
+  atomic_fetch_add_explicit(&permit->waited, 1, memory_order_relaxed);
+  return ret;
+}
+
+int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t *mtx, const struct timespec *ts)
+{
+  int ret=thrd_success;
+  unsigned expected;
+  struct timespec now;
+  if(*(const unsigned *)"1PER"!=permit->magic) return thrd_error;
+  // Increment the monotonic count to indicate we have entered a wait
+  atomic_fetch_add_explicit(&permit->waiters, 1, memory_order_acquire);
+  // Fetch me a permit
+  while((expected=1, !atomic_compare_exchange_weak_explicit(&permit->permit, &expected, 0, memory_order_relaxed, memory_order_relaxed)))
+  { // Permit is not granted, so wait if we have a mutex and a timeout
+    if(!ts) { ret=thrd_timeout; break; }
+    else
+    {
+      timespec_get(&now, TIME_UTC);
+      long long diff=timespec_diff(ts, &now);
+      if(diff<=0) { ret=thrd_timeout; break; }
+    }
+    if(mtx)
+    {
+      if(thrd_success!=cnd_timedwait(&permit->cond, mtx, ts)) { ret=thrd_error; break; }
     }
     else thrd_yield();
   }
