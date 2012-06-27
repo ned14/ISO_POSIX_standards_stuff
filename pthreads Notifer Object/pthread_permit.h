@@ -64,6 +64,13 @@ Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time 
 */
 inline int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts);
 
+/*! Waits for a time for any permit in the supplied list of permits to become available, 
+atomically unlocking the specified mutex when waiting. If mtx is NULL, never sleeps instead
+looping forever waiting for a permit. If ts is NULL, waits forever.
+
+Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
+*/
+inline int pthread_permit_select(size_t permits, pthread_permit_t **RESTRICT permit, pthread_mutex_t *mtx, const struct timespec *ts);
 
 
 

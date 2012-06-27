@@ -19,4 +19,5 @@ There is an almighty hack of C11 atomics and threading support for Windows in
 to get the reference object working.
 
 On POSIX, C11's stdatomic.h and threads.h are not typically available as yet. As a
-result, a copy of each culled from GCC v4.8's repo HEAD is present and used.
+result, macro hackery is done to map C11's atomic and thread support to C++11's
+atomics and POSIX threads.
