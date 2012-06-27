@@ -117,7 +117,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   // 1 == __atomic1 == Best available, sometimes lock-free
   // 2 == __atomic2 == Always lock-free
 
-  namespace __atomic0
+  inline namespace __atomic0
   {
     struct atomic_flag;
 

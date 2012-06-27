@@ -141,7 +141,7 @@ int main(void)
     timingoverhead+=GetUsCount()-start;
   }
   timingoverhead/=5000000;
-  printf("Timing overhead on this machine is %u us. Go!\n", timingoverhead);
+  printf("Timing overhead on this machine is %u us. Go!\n", (size_t) timingoverhead);
 
   pthread_permit1_init(&permit1, 1);
   permitaddr=&permit1;

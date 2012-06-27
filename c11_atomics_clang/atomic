@@ -32,15 +32,15 @@
 #ifndef _GLIBCXX_ATOMIC
 #define _GLIBCXX_ATOMIC 1
 
-#pragma GCC system_header
+//#pragma GCC system_header
 
-#ifndef __GXX_EXPERIMENTAL_CXX0X__
-# include <bits/c++0x_warning.h>
-#endif
+//#ifndef __GXX_EXPERIMENTAL_CXX0X__
+//# include <bits/c++0x_warning.h>
+//#endif
 
-#include <bits/atomic_base.h>
-#include <bits/atomic_0.h>
-#include <bits/atomic_2.h>
+#include "atomic_base.h"
+#include "atomic_0.h"
+#include "atomic_2.h"
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {

@@ -109,7 +109,7 @@ int pthread_permit1_grant(pthread_permitX_t _permit)
   int ret=thrd_success;
   if(*(const unsigned *)"1PER"!=permit->magic) return thrd_error;
   // Grant permit
-  atomic_store_explicit(&permit->permit, 1, memory_order_seq_cst);
+  atomic_store_explicit(&permit->permit, 1U, memory_order_seq_cst);
   // Are there waiters on the permit?
   if(atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed))
   { // There are indeed waiters. Loop waking until at least one thread takes the permit
@@ -129,7 +129,7 @@ int pthread_permit1_grant(pthread_permitX_t _permit)
 void pthread_permit1_revoke(pthread_permit1_t *permit)
 {
   if(*(const unsigned *)"1PER"!=permit->magic) return;
-  atomic_store_explicit(&permit->permit, 0, memory_order_relaxed);
+  atomic_store_explicit(&permit->permit, 0U, memory_order_relaxed);
 }
 
 int pthread_permit1_wait(pthread_permit1_t *permit, pthread_mutex_t *mtx)
@@ -138,9 +138,9 @@ int pthread_permit1_wait(pthread_permit1_t *permit, pthread_mutex_t *mtx)
   unsigned expected;
   if(*(const unsigned *)"1PER"!=permit->magic) return thrd_error;
   // Increment the monotonic count to indicate we have entered a wait
-  atomic_fetch_add_explicit(&permit->waiters, 1, memory_order_acquire);
+  atomic_fetch_add_explicit(&permit->waiters, 1U, memory_order_acquire);
   // Fetch me a permit
-  while((expected=1, !atomic_compare_exchange_weak_explicit(&permit->permit, &expected, 0, memory_order_relaxed, memory_order_relaxed)))
+  while((expected=1, !atomic_compare_exchange_weak_explicit(&permit->permit, &expected, 0U, memory_order_relaxed, memory_order_relaxed)))
   { // Permit is not granted, so wait if we have a mutex
     if(mtx)
     {
@@ -149,7 +149,7 @@ int pthread_permit1_wait(pthread_permit1_t *permit, pthread_mutex_t *mtx)
     else thrd_yield();
   }
   // Increment the monotonic count to indicate we have exited a wait
-  atomic_fetch_add_explicit(&permit->waited, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&permit->waited, 1U, memory_order_relaxed);
   return ret;
 }
 
@@ -160,9 +160,9 @@ int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t *mtx, c
   struct timespec now;
   if(*(const unsigned *)"1PER"!=permit->magic) return thrd_error;
   // Increment the monotonic count to indicate we have entered a wait
-  atomic_fetch_add_explicit(&permit->waiters, 1, memory_order_acquire);
+  atomic_fetch_add_explicit(&permit->waiters, 1U, memory_order_acquire);
   // Fetch me a permit
-  while((expected=1, !atomic_compare_exchange_weak_explicit(&permit->permit, &expected, 0, memory_order_relaxed, memory_order_relaxed)))
+  while((expected=1, !atomic_compare_exchange_weak_explicit(&permit->permit, &expected, 0U, memory_order_relaxed, memory_order_relaxed)))
   { // Permit is not granted, so wait if we have a mutex and a timeout
     if(!ts) { ret=thrd_timeout; break; }
     else
@@ -178,7 +178,7 @@ int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t *mtx, c
     else thrd_yield();
   }
   // Increment the monotonic count to indicate we have exited a wait
-  atomic_fetch_add_explicit(&permit->waited, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&permit->waited, 1U, memory_order_relaxed);
   return ret;
 }
 
