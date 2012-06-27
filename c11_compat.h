@@ -37,8 +37,8 @@ DEALINGS IN THE SOFTWARE.
 #include <stdatomic.h>
 #include <threads.h>
 #elif defined(__GNUC__) || defined(__clang__)
-#include "c11_atomics_and_threads_gcc_clang/stdatomic.h"
-#include "c11_atomics_and_threads_gcc_clang/threads.h"
+#include "c11_atomics_and_threads_gcc_clang/atomic"
+using namespace std;
 #else
 
 #ifdef _MSC_VER
