@@ -78,7 +78,7 @@ inline int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t 
 
 typedef struct pthread_permit1_s
 {
-  volatile unsigned magic;            /* Used to ensure this structure is valid */
+  atomic_uint magic;                  /* Used to ensure this structure is valid */
   atomic_uint permit;                 /* =0 no permit, =1 yes permit */
   atomic_uint waiters, waited;        /* Keeps track of when a thread waits and wakes */
   cnd_t cond;                         /* Wakes anything waiting for a permit */
@@ -90,7 +90,7 @@ int pthread_permit1_init(pthread_permit1_t *permit, _Bool initial)
   permit->permit=initial;
   permit->waiters=permit->waited=0;
   if(thrd_success!=cnd_init(&permit->cond)) return thrd_error;
-  permit->magic=*(const unsigned *)"1PER";
+  atomic_store_explicit(&permit->magic, *(const unsigned *)"1PER", memory_order_seq_cst);
   return thrd_success;
 }
 
@@ -98,7 +98,7 @@ void pthread_permit1_destroy(pthread_permit1_t *permit)
 {
   if(*(const unsigned *)"1PER"!=permit->magic) return;
   /* Mark this object as invalid for further use */
-  permit->magic=0;
+  atomic_store_explicit(&permit->magic, 0U, memory_order_seq_cst);
   permit->permit=1;
   cnd_destroy(&permit->cond);
 }
@@ -173,7 +173,8 @@ int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t *mtx, c
     }
     if(mtx)
     {
-      if(thrd_success!=cnd_timedwait(&permit->cond, mtx, ts)) { ret=thrd_error; break; }
+      int cndret=cnd_timedwait(&permit->cond, mtx, ts);
+      if(thrd_success!=cndret && thrd_timeout!=cndret) { ret=cndret; break; }
     }
     else thrd_yield();
   }

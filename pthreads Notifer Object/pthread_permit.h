@@ -68,16 +68,27 @@ inline int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *m
 atomically unlocking the specified mutex when waiting. If mtx is NULL, never sleeps instead
 looping forever waiting for a permit. If ts is NULL, waits forever.
 
+On exit, the permits array has all unsignalled permits zeroed, or if there is an error then
+only non-errored permits remain. Only one signalled permit is ever returned, but many errored
+permits can be returned.
+
 Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
 */
-inline int pthread_permit_select(size_t permits, pthread_permit_t **RESTRICT permit, pthread_mutex_t *mtx, const struct timespec *ts);
+inline int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthread_mutex_t *mtx, const struct timespec *ts);
 
 
 
 
+//! The maximum number of pthread_permit_select which can occur simultaneously
+#define MAX_PTHREAD_PERMIT_SELECTS 64
+typedef struct pthread_permit_select_s
+{
+  atomic_uint magic;                  /* Used to ensure this structure is valid */
+  cnd_t cond;                         /* Wakes anything waiting for a permit */
+} pthread_permit_select_t;
 typedef struct pthread_permit_s
-{ /* NOTE: KEEP THIS HEADER THE SAME AS pthread_permit1_t */
-  volatile unsigned magic;            /* Used to ensure this structure is valid */
+{ /* NOTE: KEEP THIS HEADER THE SAME AS pthread_permit1_t to allow its grant() to optionally work here */
+  atomic_uint magic;                  /* Used to ensure this structure is valid */
   atomic_uint permit;                 /* =0 no permit, =1 yes permit */
   atomic_uint waiters, waited;        /* Keeps track of when a thread waits and wakes */
   cnd_t cond;                         /* Wakes anything waiting for a permit */
@@ -85,17 +96,24 @@ typedef struct pthread_permit_s
   /* Extensions from pthread_permit1_t type */
   unsigned replacePermit;             /* What to replace the permit with when consumed */
   atomic_uint lockWake;               /* Used to exclude new wakers if and only if waiters don't consume */
+  pthread_permit_select_t *RESTRICT selects[MAX_PTHREAD_PERMIT_SELECTS]; /* select permit parent */
 } pthread_permit_t;
-
+extern pthread_permit_select_t pthread_permit_selects[MAX_PTHREAD_PERMIT_SELECTS];
+#if 1 // for testing
+pthread_permit_select_t pthread_permit_selects[MAX_PTHREAD_PERMIT_SELECTS];
+#endif // testing
 
 int pthread_permit_init(pthread_permit_t *permit, _Bool waitersDontConsume, _Bool initial)
 {
+  size_t n;
   permit->permit=initial;
   permit->waiters=permit->waited=0;
   if(thrd_success!=cnd_init(&permit->cond)) return thrd_error;
   permit->replacePermit=waitersDontConsume;
   permit->lockWake=0;
-  permit->magic=*(const unsigned *)"PPER";
+  for(n=0; n<MAX_PTHREAD_PERMIT_SELECTS; n++)
+    permit->selects[n]=0;
+  atomic_store_explicit(&permit->magic, *(const unsigned *)"PPER", memory_order_seq_cst);
   return thrd_success;
 }
 
@@ -103,7 +121,7 @@ void pthread_permit_destroy(pthread_permit_t *permit)
 {
   if(*(const unsigned *)"PPER"!=permit->magic) return;
   /* Mark this object as invalid for further use */
-  permit->magic=0;
+  atomic_store_explicit(&permit->magic, 0U, memory_order_seq_cst);
   permit->replacePermit=1;
   permit->permit=1;
   cnd_destroy(&permit->cond);
@@ -113,6 +131,7 @@ int pthread_permit_grant(pthread_permitX_t _permit)
 { // If permits aren't consumed, prevent any new waiters or granters
   pthread_permit_t *permit=(pthread_permit_t *) _permit;
   int ret=thrd_success;
+  size_t n;
   if(*(const unsigned *)"PPER"!=permit->magic) return thrd_error;
   if(permit->replacePermit)
   {
@@ -136,6 +155,18 @@ int pthread_permit_grant(pthread_permitX_t _permit)
           ret=thrd_error;
           goto exit;
         }
+        // Are there select operations on the permit?
+        for(n=0; n<MAX_PTHREAD_PERMIT_SELECTS; n++)
+        {
+          if(permit->selects[n])
+          {
+            if(thrd_success!=cnd_signal(&permit->selects[n]->cond))
+            {
+              ret=thrd_error;
+              goto exit;
+            }
+          }
+        }
         //if(1==cpus) thrd_yield();
       } while(atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed));
     }
@@ -147,6 +178,17 @@ int pthread_permit_grant(pthread_permitX_t _permit)
         {
           ret=thrd_error;
           goto exit;
+        }
+        for(n=0; n<MAX_PTHREAD_PERMIT_SELECTS; n++)
+        {
+          if(permit->selects[n])
+          {
+            if(thrd_success!=cnd_signal(&permit->selects[n]->cond))
+            {
+              ret=thrd_error;
+              goto exit;
+            }
+          }
         }
         //if(1==cpus) thrd_yield();
       }
@@ -222,7 +264,8 @@ int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, con
     }
     if(mtx)
     {
-      if(thrd_success!=cnd_timedwait(&permit->cond, mtx, ts)) { ret=thrd_error; break; }
+      int cndret=cnd_timedwait(&permit->cond, mtx, ts);
+      if(thrd_success!=cndret && thrd_timeout!=cndret) { ret=cndret; break; }
     }
     else thrd_yield();
   }
@@ -231,6 +274,99 @@ int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, con
   return ret;
 }
 
+int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthread_mutex_t *mtx, const struct timespec *ts)
+{
+  int ret=thrd_success;
+  unsigned expected;
+  struct timespec now;
+  pthread_permit_select_t *myselect=0;
+  size_t n, selectslot=(size_t)-1, selectedpermit=(size_t)-1;
+  // Sanity check permits
+  for(n=0; n<no; n++)
+  {
+    if(*(const unsigned *)"PPER"!=permits[n]->magic)
+    {
+      permits[n]=0;
+      ret=thrd_error;
+    }
+  }
+  if(thrd_success!=ret) return ret;
+  // Find a free slot for us to use
+  for(n=0; n<MAX_PTHREAD_PERMIT_SELECTS; n++)
+  {
+    expected=0;
+    if(atomic_compare_exchange_weak_explicit(&pthread_permit_selects[n].magic, &expected, *(const unsigned *)"SPER", memory_order_relaxed, memory_order_relaxed))
+    {
+      selectslot=n;
+      break;
+    }
+  }
+  if(MAX_PTHREAD_PERMIT_SELECTS==n) return thrd_nomem;
+  myselect=&pthread_permit_selects[selectslot];
+  if(thrd_success!=(ret=cnd_init(&myselect->cond))) return ret;
+
+  // Link each of the permits into our select slot
+  for(n=0; n<no; n++)
+  {
+    // If the permit isn't consumed, if the permit is executing then wait here
+    if(permits[n]->replacePermit)
+    {
+      while(atomic_load_explicit(&permits[n]->lockWake, memory_order_acquire))
+      {
+        //if(1==cpus) thrd_yield();
+      }
+    }
+    // Increment the monotonic count to indicate we have entered a wait
+    atomic_fetch_add_explicit(&permits[n]->waiters, 1U, memory_order_acquire);
+    // Set the select
+    assert(!permits[n]->selects[selectslot]);
+    permits[n]->selects[selectslot]=myselect;
+  }
+
+  // Loop the permits, trying to grab a permit
+  for(;;)
+  {
+    for(n=0; n<no; n++)
+    {
+      expected=1;
+      if(atomic_compare_exchange_weak_explicit(&permits[n]->permit, &expected, permits[n]->replacePermit, memory_order_relaxed, memory_order_relaxed))
+      { // Permit is granted
+        selectedpermit=n;
+        break;
+      }
+    }
+    if((size_t)-1!=selectedpermit) break;
+    // Permit is not granted, so wait if we have a mutex
+    if(ts)
+    {
+      timespec_get(&now, TIME_UTC);
+      long long diff=timespec_diff(ts, &now);
+      if(diff<=0) { ret=thrd_timeout; break; }
+    }
+    if(mtx)
+    {
+      int cndret=(ts ? cnd_timedwait(&myselect->cond, mtx, ts) : cnd_wait(&myselect->cond, mtx));
+      if(thrd_success!=cndret && thrd_timeout!=cndret) { ret=cndret; break; }
+    }
+    else thrd_yield();
+  }
+
+  // Delink each of the permits from our select slot
+  for(n=0; n<no; n++)
+  {
+    // Unset the select
+    assert(permits[n]->selects[selectslot]==myselect);
+    permits[n]->selects[selectslot]=0;
+    // Increment the monotonic count to indicate we have exited a wait
+    atomic_fetch_add_explicit(&permits[n]->waited, 1U, memory_order_relaxed);
+    // Zero if not selected
+    if(selectedpermit!=n) permits[n]=0;
+  }
+  // Destroy the select slot's condition variable and reset
+  cnd_destroy(&myselect->cond);
+  myselect->magic=0;
+  return ret;
+}
 
 #ifdef __cplusplus
 }
