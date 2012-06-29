@@ -29,15 +29,20 @@ DEALINGS IN THE SOFTWARE.
 */
 
 #define SELECT_PERMITS MAX_PTHREAD_PERMIT_SELECTS
+#define _GLIBCXX_ATOMIC_BUILTINS_4 // Without this tries to use std::exception_ptr which Mingw can't handle
 
 #define CATCH_CONFIG_RUNNER
 #include "../catch.hpp"
+#include <bitset>
 #ifdef USE_PARALLEL
 #ifdef _MSC_VER
 // Use Microsoft's Parallel Patterns Library
 #include <ppl.h>
 #else
 // Use Intel's Threading Building Blocks compatibility layer for the PPL
+//#define TBB_USE_CAPTURED_EXCEPTION 1 // Without this tries to use std::exception_ptr which Mingw can't handle
+#include "tbb/parallel_for.h"
+#include "tbb/task_scheduler_init.h"
 #include "tbb/compat/ppl.h"
 #endif
 #endif
@@ -429,18 +434,23 @@ int main(int argc, char *argv[])
   size_t threads=(size_t)-1;
 #ifdef _MSC_VER
   {
+    size_t n;
     SYSTEM_LOGICAL_PROCESSOR_INFORMATION slpi[256];
     DWORD len=sizeof(slpi);
     GetLogicalProcessorInformation(slpi, &len);
     assert(ERROR_INSUFFICIENT_BUFFER!=GetLastError());
-    threads=len/sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
+    threads=0;
+    for(n=0; n<len/sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION); n++)
+    {
+      if(RelationProcessorCore==slpi[n].Relationship) threads+=std::bitset<64>((unsigned long long) slpi[n].ProcessorMask).count();
+    }
   }
 #else
-#error Todo: Implement for Intel TBB
+  threads=tbb::task_scheduler_init::default_num_threads();
 #endif
   printf("These unit tests have been compiled with parallel support. I will use %d threads.\n", threads);
 #else
-  printf("These unit tests have not been compiled with parallel support and will execute sequentially.\n");
+  printf("These unit tests have not been compiled with parallel support and will execute only those which are sequential.\n");
 #endif
   int result=Catch::Main(argc, argv);
   return result;
