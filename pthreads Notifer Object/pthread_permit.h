@@ -68,9 +68,9 @@ inline int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *m
 atomically unlocking the specified mutex when waiting. If mtx is NULL, never sleeps instead
 looping forever waiting for a permit. If ts is NULL, waits forever.
 
-On exit, the permits array has all unsignalled permits zeroed, or if there is an error then
-only non-errored permits remain. Only one signalled permit is ever returned, but many errored
-permits can be returned.
+On exit, the permits array has all ungranted permits zeroed, or if there is an error then
+only errored permits are zeroed. Only the first granted permit is ever returned so if no error then
+only one element of the array will be set on return, but if error then many elements can be returned.
 
 Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
 */
@@ -96,7 +96,7 @@ typedef struct pthread_permit_s
   /* Extensions from pthread_permit1_t type */
   unsigned replacePermit;             /* What to replace the permit with when consumed */
   atomic_uint lockWake;               /* Used to exclude new wakers if and only if waiters don't consume */
-  pthread_permit_select_t *RESTRICT selects[MAX_PTHREAD_PERMIT_SELECTS]; /* select permit parent */
+  pthread_permit_select_t *volatile RESTRICT selects[MAX_PTHREAD_PERMIT_SELECTS]; /* select permit parent */
 } pthread_permit_t;
 extern pthread_permit_select_t pthread_permit_selects[MAX_PTHREAD_PERMIT_SELECTS];
 #if 1 // for testing
@@ -136,6 +136,7 @@ int pthread_permit_grant(pthread_permitX_t _permit)
   if(permit->replacePermit)
   {
     unsigned expected;
+    // Only one grant may occur concurrently if permits aren't consumed
     while((expected=0, !atomic_compare_exchange_weak_explicit(&permit->lockWake, &expected, 1U, memory_order_relaxed, memory_order_relaxed)))
     {
       //if(1==cpus) thrd_yield();
@@ -179,6 +180,7 @@ int pthread_permit_grant(pthread_permitX_t _permit)
           ret=thrd_error;
           goto exit;
         }
+        // Are there select operations on the permit?
         for(n=0; n<MAX_PTHREAD_PERMIT_SELECTS; n++)
         {
           if(permit->selects[n])
@@ -280,15 +282,16 @@ int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthrea
   unsigned expected;
   struct timespec now;
   pthread_permit_select_t *myselect=0;
-  size_t n, selectslot=(size_t)-1, selectedpermit=(size_t)-1;
+  size_t n, replacePermits=0, selectslot=(size_t)-1, selectedpermit=(size_t)-1;
   // Sanity check permits
   for(n=0; n<no; n++)
   {
     if(*(const unsigned *)"PPER"!=permits[n]->magic)
     {
       permits[n]=0;
-      ret=thrd_error;
+      if(thrd_success!=ret) ret=thrd_error;
     }
+    if(permits[n]->replacePermit) replacePermits++;
   }
   if(thrd_success!=ret) return ret;
   // Find a free slot for us to use
@@ -315,6 +318,7 @@ int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthrea
       {
         //if(1==cpus) thrd_yield();
       }
+      replacePermits--;
     }
     // Increment the monotonic count to indicate we have entered a wait
     atomic_fetch_add_explicit(&permits[n]->waiters, 1U, memory_order_acquire);
@@ -322,6 +326,7 @@ int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthrea
     assert(!permits[n]->selects[selectslot]);
     permits[n]->selects[selectslot]=myselect;
   }
+  assert(!replacePermits);
 
   // Loop the permits, trying to grab a permit
   for(;;)

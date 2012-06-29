@@ -28,8 +28,19 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#define CATCH_CONFIG_MAIN
+#define SELECT_PERMITS MAX_PTHREAD_PERMIT_SELECTS
+
+#define CATCH_CONFIG_RUNNER
 #include "../catch.hpp"
+#ifdef USE_PARALLEL
+#ifdef _MSC_VER
+// Use Microsoft's Parallel Patterns Library
+#include <ppl.h>
+#else
+// Use Intel's Threading Building Blocks compatibility layer for the PPL
+#include "tbb/compat/ppl.h"
+#endif
+#endif
 
 #include "pthread_permit.h"
 
@@ -48,7 +59,7 @@ TEST_CASE("timespec/diff", "Tests that timespec_diff works as intended")
 }
 
 
-
+/**************************************** pthread_permit1 ****************************************/
 
 TEST_CASE("pthread_permit1/initdestroy", "Tests repeated init and destroy on same object")
 {
@@ -113,6 +124,7 @@ TEST_CASE("pthread_permit1/grantrevokewait", "Tests that grants cause exactly on
 
 
 
+/**************************************** pthread_permit ****************************************/
 
 TEST_CASE("pthread_permit/initdestroy", "Tests repeated init and destroy on same object")
 {
@@ -194,6 +206,197 @@ TEST_CASE("pthread_permit/ncgrantrevokewait", "Tests that non-consuming grants d
 }
 
 
+/***************************** pthread_permit non-parallel/parallel ******************************/
+
+TEST_CASE("pthread_permit/non-parallel/selectfirst", "Tests that select does choose the first available permit exactly once")
+{
+  pthread_permit_t permits[SELECT_PERMITS];
+  size_t n;
+  struct timespec ts;
+  timespec_get(&ts, TIME_UTC);
+  for(n=0; n<SELECT_PERMITS; n++)
+  {
+    REQUIRE(0==pthread_permit_init(&permits[n], 0, 1));
+  }
+  for(n=0; n<SELECT_PERMITS; n++)
+  {
+    size_t m, selectedpermit=(size_t)-1;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    // Ensure exactly one item has been selected
+    for(m=0; m<SELECT_PERMITS; m++)
+    {
+      if((size_t)-1==selectedpermit && parray[m])
+      {
+        REQUIRE(parray[m]==&permits[m]);
+        selectedpermit=m;
+      }
+      else
+        REQUIRE(parray[m]==0);
+    }
+    // Ensure the one selected item won't repermit
+    REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+    // Additionally ensure selected item is sequential
+    REQUIRE(selectedpermit==n);
+  }
+  // Make sure nothing permits now
+  {
+    size_t m;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(ETIMEDOUT==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+  }
+  for(n=0; n<SELECT_PERMITS; n++)
+    pthread_permit_destroy(&permits[n]);
+}
+
+#ifdef USE_PARALLEL
+TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose the first available permit exactly once")
+{
+  pthread_permit_t permits[SELECT_PERMITS];
+  size_t n;
+  struct timespec ts;
+  timespec_get(&ts, TIME_UTC);
+  for(n=0; n<SELECT_PERMITS; n++)
+  {
+    REQUIRE(0==pthread_permit_init(&permits[n], 0, 1));
+  }
+  Concurrency::parallel_for(0, SELECT_PERMITS, [&](size_t n)
+  {
+    size_t m, selectedpermit=(size_t)-1;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    // Ensure exactly one item has been selected
+    for(m=0; m<SELECT_PERMITS; m++)
+    {
+      if((size_t)-1==selectedpermit && parray[m])
+      {
+        REQUIRE(parray[m]==&permits[m]);
+        selectedpermit=m;
+      }
+      else
+        REQUIRE(parray[m]==0);
+    }
+    // Ensure the one selected item won't repermit
+    REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+#if 0
+    // Additionally ensure selected item is sequential
+    REQUIRE(selectedpermit==n);
+#endif
+  }
+  );
+  // Make sure nothing permits now
+  {
+    size_t m;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(ETIMEDOUT==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+  }
+  for(n=0; n<SELECT_PERMITS; n++)
+    pthread_permit_destroy(&permits[n]);
+}
+#endif
+
+TEST_CASE("pthread_permit/non-parallel/ncselect", "Tests that select does not consume non-consuming permits")
+{
+  pthread_permit_t permits[SELECT_PERMITS];
+  size_t n;
+  struct timespec ts;
+  timespec_get(&ts, TIME_UTC);
+  for(n=0; n<SELECT_PERMITS; n++)
+  {
+    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1, 1));
+  }
+  for(n=0; n<SELECT_PERMITS; n++)
+  {
+    size_t m, selectedpermit=(size_t)-1;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    // Ensure exactly one item has been selected
+    for(m=0; m<SELECT_PERMITS; m++)
+    {
+      if((size_t)-1==selectedpermit && parray[m])
+      {
+        REQUIRE(parray[m]==&permits[m]);
+        selectedpermit=m;
+      }
+      else
+        REQUIRE(parray[m]==0);
+    }
+    // Ensure the one selected item won't repermit, except for the NC permit
+    REQUIRE((selectedpermit==SELECT_PERMITS-1 ? 0 : ETIMEDOUT)==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+  }
+  // Make sure nothing permits now, except for the NC permit
+  {
+    size_t m;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    for(m=0; m<SELECT_PERMITS; m++)
+      REQUIRE(parray[m]==(m==SELECT_PERMITS-1 ? &permits[m] : 0));
+  }
+  for(n=0; n<SELECT_PERMITS; n++)
+    pthread_permit_destroy(&permits[n]);
+}
+
+#ifdef USE_PARALLEL
+TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consume non-consuming permits")
+{
+  pthread_permit_t permits[SELECT_PERMITS];
+  size_t n;
+  struct timespec ts;
+  timespec_get(&ts, TIME_UTC);
+  for(n=0; n<SELECT_PERMITS; n++)
+  {
+    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1, 1));
+  }
+  Concurrency::parallel_for(0, SELECT_PERMITS, [&](size_t n)
+  {
+    size_t m, selectedpermit=(size_t)-1;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    // Ensure exactly one item has been selected
+    for(m=0; m<SELECT_PERMITS; m++)
+    {
+      if((size_t)-1==selectedpermit && parray[m])
+      {
+        REQUIRE(parray[m]==&permits[m]);
+        selectedpermit=m;
+      }
+      else
+        REQUIRE(parray[m]==0);
+    }
+    // Ensure the one selected item won't repermit, except for the NC permit
+    REQUIRE((selectedpermit==SELECT_PERMITS-1 ? 0 : ETIMEDOUT)==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+  }
+  );
+  // Make sure nothing permits now, except for the NC permit
+  {
+    size_t m;
+    pthread_permit_t *parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS; m++)
+      parray[m]=&permits[m];
+    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    for(m=0; m<SELECT_PERMITS; m++)
+      REQUIRE(parray[m]==(m==SELECT_PERMITS-1 ? &permits[m] : 0));
+  }
+  for(n=0; n<SELECT_PERMITS; n++)
+    pthread_permit_destroy(&permits[n]);
+}
+#endif
+
+
 
 
 TEST_CASE("pthread_permitX/interchangeable", "Tests that permit1 and permit objects can not be confused by grant")
@@ -218,4 +421,27 @@ TEST_CASE("pthread_permitX/interchangeable", "Tests that permit1 and permit obje
   REQUIRE(EINVAL==pthread_permit_grant(&permit));
   pthread_permit1_destroy(&permit1);
   REQUIRE(EINVAL==pthread_permit1_grant(&permit1));
+}
+
+int main(int argc, char *argv[])
+{
+#ifdef USE_PARALLEL
+  size_t threads=(size_t)-1;
+#ifdef _MSC_VER
+  {
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION slpi[256];
+    DWORD len=sizeof(slpi);
+    GetLogicalProcessorInformation(slpi, &len);
+    assert(ERROR_INSUFFICIENT_BUFFER!=GetLastError());
+    threads=len/sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
+  }
+#else
+#error Todo: Implement for Intel TBB
+#endif
+  printf("These unit tests have been compiled with parallel support. I will use %d threads.\n", threads);
+#else
+  printf("These unit tests have not been compiled with parallel support and will execute sequentially.\n");
+#endif
+  int result=Catch::Main(argc, argv);
+  return result;
 }
