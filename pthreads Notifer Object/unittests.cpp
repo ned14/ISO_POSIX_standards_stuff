@@ -131,6 +131,30 @@ TEST_CASE("pthread_permit1/grantrevokewait", "Tests that grants cause exactly on
 
 /**************************************** pthread_permit ****************************************/
 
+TEST_CASE("pthread_permitX/interchangeable", "Tests that permit1 and permit objects can not be confused by grant")
+{
+  pthread_permit1_t permit1;
+  pthread_permit_t permit;
+  REQUIRE(0==pthread_permit1_init(&permit1, 0));
+  REQUIRE(0==pthread_permit_init(&permit, 0, 0));
+
+  pthread_permitX_t somepermit;
+  somepermit=&permit1;
+  REQUIRE(0==pthread_permit1_grant(somepermit));
+  somepermit=&permit;
+  REQUIRE(0==pthread_permit_grant(somepermit));
+
+  somepermit=&permit;
+  REQUIRE(EINVAL==pthread_permit1_grant(somepermit));
+  somepermit=&permit1;
+  REQUIRE(EINVAL==pthread_permit_grant(somepermit));
+
+  pthread_permit_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  pthread_permit1_destroy(&permit1);
+  REQUIRE(EINVAL==pthread_permit1_grant(&permit1));
+}
+
 TEST_CASE("pthread_permit/initdestroy", "Tests repeated init and destroy on same object")
 {
   pthread_permit_t permit;
@@ -195,7 +219,7 @@ TEST_CASE("pthread_permit/grantrevokewait", "Tests that grants cause exactly one
 TEST_CASE("pthread_permit/ncgrantrevokewait", "Tests that non-consuming grants disable all waits")
 {
   pthread_permit_t permit;
-  REQUIRE(0==pthread_permit_init(&permit, 1, 0));
+  REQUIRE(0==pthread_permit_init(&permit, PTHREAD_PERMIT_WAITERS_DONT_CONSUME, 0));
   REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
   REQUIRE(0==pthread_permit_grant(&permit));
   pthread_permit_revoke(&permit);
@@ -316,7 +340,7 @@ TEST_CASE("pthread_permit/non-parallel/ncselect", "Tests that select does not co
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS; n++)
   {
-    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1, 1));
+    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1 ? PTHREAD_PERMIT_WAITERS_DONT_CONSUME : 0, 1));
   }
   for(n=0; n<SELECT_PERMITS; n++)
   {
@@ -362,7 +386,7 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS; n++)
   {
-    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1, 1));
+    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1 ? PTHREAD_PERMIT_WAITERS_DONT_CONSUME : 0, 1));
   }
   Concurrency::parallel_for(0, SELECT_PERMITS, [&](size_t n)
   {
@@ -402,31 +426,34 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
 #endif
 
 
+/***************************** pthread_permit fd mirroring ******************************/
 
-
-TEST_CASE("pthread_permitX/interchangeable", "Tests that permit1 and permit objects can not be confused by grant")
+TEST_CASE("pthread_permit/fdmirroring", "Tests that file descriptor mirroring works as intended")
 {
-  pthread_permit1_t permit1;
   pthread_permit_t permit;
-  REQUIRE(0==pthread_permit1_init(&permit1, 0));
-  REQUIRE(0==pthread_permit_init(&permit, 0, 0));
+  int fds[2];
+  pthread_permit_association_t assoc;
+  struct pollfd pfd={0};
+  pfd.events=POLLIN;
+  REQUIRE(0==pthread_permit_init(&permit, PTHREAD_PERMIT_WAITERS_DONT_CONSUME, 0));
+  REQUIRE(0==pipe(fds));
+  pfd.fd=fds[0];
+  REQUIRE(0!=(assoc=pthread_permit_associate_fd(&permit, fds)));
 
-  pthread_permitX_t somepermit;
-  somepermit=&permit1;
-  REQUIRE(0==pthread_permit1_grant(somepermit));
-  somepermit=&permit;
-  REQUIRE(0==pthread_permit_grant(somepermit));
+  REQUIRE(0==poll(&pfd, 1, 0));
+  REQUIRE(!(pfd.revents&POLLIN));
+  pthread_permit_grant(&permit);
+  REQUIRE(0==poll(&pfd, 1, 0));
+  REQUIRE(!!(pfd.revents&POLLIN));
+  pthread_permit_revoke(&permit);
+  REQUIRE(0==poll(&pfd, 1, 0));
+  REQUIRE(!(pfd.revents&POLLIN));
 
-  somepermit=&permit;
-  REQUIRE(EINVAL==pthread_permit1_grant(somepermit));
-  somepermit=&permit1;
-  REQUIRE(EINVAL==pthread_permit_grant(somepermit));
-
+  pthread_permit_deassociate(&permit, assoc);
   pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
-  pthread_permit1_destroy(&permit1);
-  REQUIRE(EINVAL==pthread_permit1_grant(&permit1));
 }
+
+
 
 int main(int argc, char *argv[])
 {

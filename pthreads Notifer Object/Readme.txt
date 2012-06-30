@@ -10,7 +10,8 @@ proposal to the Austin Working Group for inclusion into POSIX after the 2012 TC1
 This reference implementation has been tested on:
  * Microsoft Windows 7 with Visual Studio 2010
  * Clang v3.1
- * GCC v4.6
+ * GCC v4.6 (Mingw)
+ * GCC v4.x (Ubuntu)
 
 Build notes:
 -=-=-=-=-=-=
@@ -21,3 +22,7 @@ to get the reference object working.
 On POSIX, C11's stdatomic.h and threads.h are not typically available as yet. As a
 result, macro hackery is done to map C11's atomic and thread support to C++11's
 atomics and POSIX threads.
+
+The unit tests will make use of parallel multithreaded unit testing if you define
+USE_PARALLEL. For this to work, you need Microsoft's Parallel Patterns Library
+(included in VS2010 and later) or Intel's Threading Building Blocks.
