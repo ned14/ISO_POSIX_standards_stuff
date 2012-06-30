@@ -53,7 +53,7 @@ extern "C" {
         // MSVCRT doesn't ask for SYNCHRONIZE permissions in pipe() irritatingly
         //if(WAIT_OBJECT_0==WaitForSingleObject((HANDLE) _get_osfhandle(fds[n].fd), 0)) fds[n].revents|=POLLIN;
         DWORD bytestogo=0;
-        PeekNamedPipe((HANDLE) _get_osfhandle(fds[n].fd), NULL, NULL, NULL, &bytestogo, NULL);
+        PeekNamedPipe((HANDLE) _get_osfhandle(fds[n].fd), NULL, 0, NULL, &bytestogo, NULL);
         if(bytestogo) fds[n].revents|=POLLIN;
       }
     }
@@ -564,7 +564,7 @@ pthread_permit_association_t pthread_permit_associate_fd(pthread_permit_t *permi
 
 void pthread_permit_deassociate(pthread_permit_t *permit, pthread_permit_association_t assoc)
 {
-  pthread_permit_hook_t_np **hookptr;
+  pthread_permit_hook_t_np *RESTRICT *hookptr;
   if(*(const unsigned *)"PPER"!=permit->magic || !permit->replacePermit) return;
   for(hookptr=&permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT]; *hookptr; hookptr=&(*hookptr)->next)
   {
