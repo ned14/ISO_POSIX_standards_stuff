@@ -450,6 +450,7 @@ TEST_CASE("pthread_permit/fdmirroring", "Tests that file descriptor mirroring wo
   REQUIRE(!(pfd.revents&POLLIN));
 
   pthread_permit_deassociate(&permit, assoc);
+  close(fds[1]); close(fds[0]);
   pthread_permit_destroy(&permit);
 }
 

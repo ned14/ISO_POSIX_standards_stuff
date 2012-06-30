@@ -36,6 +36,7 @@ DEALINGS IN THE SOFTWARE.
 #include <io.h>
 #define read _read
 #define write _write
+#define close _close
 #define pipe(fds) _pipe((fds), 4096, _O_BINARY)
 extern "C" {
   struct pollfd { int fd; short events, revents; };
