@@ -47,7 +47,7 @@ extern "C" {
   // Nasty poll() emulation for Windows
   inline int poll(struct pollfd *fds, size_t nfds, int timeout)
   {
-    size_t n;
+    size_t n, successes=0;
     for(n=0; n<nfds; n++)
     {
       fds[n].revents=0;
@@ -57,10 +57,15 @@ extern "C" {
         //if(WAIT_OBJECT_0==WaitForSingleObject((HANDLE) _get_osfhandle(fds[n].fd), 0)) fds[n].revents|=POLLIN;
         DWORD bytestogo=0;
         PeekNamedPipe((HANDLE) _get_osfhandle(fds[n].fd), NULL, 0, NULL, &bytestogo, NULL);
-        if(bytestogo) fds[n].revents|=POLLIN;
+        if(bytestogo) { fds[n].revents|=POLLIN; successes++; }
+      }
+      if(fds[n].events&POLLOUT)
+      {
+        fds[n].revents|=POLLOUT;
+        successes++;
       }
     }
-    return 0;
+    return successes;
   }
 }
 #else
@@ -516,7 +521,7 @@ int pthread_permit_associate_fd_hook_grant(pthread_permit_t *permit, pthread_per
   pfd.fd=fd;
   pfd.events=POLLOUT;
   poll(&pfd, 1, 0);
-  if(!(pfd.revents&POLLOUT))
+  if(pfd.revents&POLLOUT)
     write(fd, &buffer, 1);
   return hookdata->next ? hookdata->next->func(permit, hookdata->next) : 0;
 }

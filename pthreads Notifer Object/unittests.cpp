@@ -440,13 +440,13 @@ TEST_CASE("pthread_permit/fdmirroring", "Tests that file descriptor mirroring wo
   pfd.fd=fds[0];
   REQUIRE(0!=(assoc=pthread_permit_associate_fd(&permit, fds)));
 
-  REQUIRE(0==poll(&pfd, 1, 0));
+  REQUIRE(poll(&pfd, 1, 0)>=0);
   REQUIRE(!(pfd.revents&POLLIN));
   pthread_permit_grant(&permit);
-  REQUIRE(0==poll(&pfd, 1, 0));
+  REQUIRE(poll(&pfd, 1, 0)>=0);
   REQUIRE(!!(pfd.revents&POLLIN));
   pthread_permit_revoke(&permit);
-  REQUIRE(0==poll(&pfd, 1, 0));
+  REQUIRE(poll(&pfd, 1, 0)>=0);
   REQUIRE(!(pfd.revents&POLLIN));
 
   pthread_permit_deassociate(&permit, assoc);
