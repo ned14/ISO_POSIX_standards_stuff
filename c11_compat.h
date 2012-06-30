@@ -309,7 +309,7 @@ inline int timespec_get(struct timespec *ts, int base)
   return base;
 #else
 #ifdef CLOCK_MONOTONIC
-  clock_gettime(CLOCK_MONOTONIC, &ts);
+  clock_gettime(CLOCK_MONOTONIC, ts);
 #else
   struct timeval tv;
   gettimeofday(&tv, 0);
@@ -398,7 +398,7 @@ inline int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
   pthread_create(thr, NULL, (void *(*)(void *))func, arg);
   return thrd_success;
 }
-inline int thrd_sleep(const struct timespec *duration, const struct timespec *remaining)
+inline int thrd_sleep(const struct timespec *duration, struct timespec *remaining)
 {
 #ifdef _WIN32 // Mingw doesn't define a nanosleep in its libraries
   Sleep((DWORD)(duration->tv_sec*1000+duration->tv_nsec/1000000));

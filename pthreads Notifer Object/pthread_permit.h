@@ -31,6 +31,8 @@ DEALINGS IN THE SOFTWARE.
 #ifndef PTHREAD_PERMIT_H
 #define PTHREAD_PERMIT_H
 #include "pthread_permit1.h"
+#include <string.h>
+
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>

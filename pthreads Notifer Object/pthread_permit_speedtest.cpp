@@ -53,7 +53,7 @@ static thrd_t threads[THREADS];
 static volatile int done;
 static void *permitaddr;
 
-void sleep(long ms)
+void mssleep(long ms)
 {
   struct timespec ts;
   ts.tv_sec=ms/1000;
@@ -83,13 +83,13 @@ template<typename permit_t, int (*permit_grant)(pthread_permitX_t), void (*permi
       revoketotal+=end-start-timingoverhead;
       //printf("Thread %u revoked permit\n", mythread);
 #endif
-      //sleep(1000);
+      //mssleep(1000);
       //printf("\nThread %u granting permit\n", mythread);
       start=GetUsCount();
       permit_grant(permit);
       end=GetUsCount();
       granttotal+=end-start-timingoverhead;
-      //sleep(1);
+      //mssleep(1);
       count++;
     }
     printf("Thread %u, average revoke/grant time was %u/%u cycles\n", mythread, (size_t)((double)revoketotal/count*CYCLESPERMICROSECOND), (size_t)((double)granttotal/count*CYCLESPERMICROSECOND));
@@ -152,7 +152,7 @@ int main(void)
   printf("Press key to kill all\n");
   getchar();
   done=1;
-  sleep(2000);
+  mssleep(2000);
   printf("Press key to exit\n");
   getchar();
   return 0;
