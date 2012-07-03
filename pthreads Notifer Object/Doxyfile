@@ -1,4 +1,6 @@
 PROJECT_NAME           = "The POSIX threads permit objects"
+PROJECT_NUMBER         = v0.90
+PROJECT_BRIEF          = "(C) 2011-2012 Niall Douglas http://www.nedproductions.biz/"
 OPTIMIZE_OUTPUT_FOR_C  = YES
 INPUT                  = pthread_permit.h
 SOURCE_BROWSER         = YES

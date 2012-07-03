@@ -43,6 +43,8 @@ typedef mtx_t pthread_mutex_t;
 
 /*! \mainpage The POSIX threads permit objects
 
+(C) 2011-2012 Niall Douglas http://www.nedproductions.biz/
+
 Herein lies a suite of safe, composable, user mode permit objects for POSIX threads. They are used
 to asynchronously give a thread of code the \em permission to proceed and as such are
 very useful in any situation where one bit of code must asychronously notify another
@@ -76,7 +78,9 @@ instead spinning until the permit is gained. This permits their use in bootstrap
 embedded systems, or where low latency is paramount.
 
 This reference implementation is written in C11 and the latest version can be found at
-https://github.com/ned14/ISO_POSIX_standards_stuff/tree/master/pthreads%20Notifer%20Object
+https://github.com/ned14/ISO_POSIX_standards_stuff/tree/master/pthreads%20Notifer%20Object.
+It contains a full set of unit tests written using C++ CATCH. The software licence is Boost's
+software licence (free to use by anyone).
 
 It contains support for Microsoft Windows 7 and POSIX. It has been tested on Microsoft Visual
 Studio 2010, GCC v4.6 and clang v3.2.
@@ -84,8 +88,35 @@ Studio 2010, GCC v4.6 and clang v3.2.
 The simple permit object costs 48/0/142 CPU cycles for grant/revoke/wait uncontended and 359/4/372
 cycles when contended between two threads. These results are for an Intel Core 2 processor.
 
-\section Detailed Information
-\subpage pthread_permit.h
+\section Why is it necessary that a permit object be added to POSIX threads?
+There are many occasions in threaded programming when a third party library goes off and does
+something asynchronous in the background. In the meantime, the foreground thread may do other tasks,
+occasionally polling a notification object to see if the background job has completed, or indeed if
+it runs out of foreground things to do, it may simply sleep until the completion of the background
+job or jobs. Put simply, the foreground threads polls or waits for permission to continue.
+
+The problem is that naive programmers think a wait condition is suitable for this purpose. This is
+highly incorrect due to the problem of spurious and lost wakeups inherent to wait conditions. Despite
+the documentation for pthread_cond saying this, wait conditions are frequently proposed as the "correct"
+solution in many "expert advice" internet sites including stackflow.com among others. The present lack of
+standardised, safe asynchronous notification objects in POSIX leads to too many "roll your own"
+implementations which are too frequently subtly broken. This leads to unreliability in threaded
+programming. Furthermore, there is a problem of interoperability - how can third party libraries
+interoperate easily when each rolls its own asynchronous notification object.
+
+A completely safe notification object can be built from atomics and wait conditions - indeed, what
+is proposed is entirely built this way. The problem is rather one of standardisation on a safe,
+efficient, and well tested implementation.
+
+\section Acknowledgements
+The POSIX threads permit objects proposed by this document came from internal deliberations by WG14
+during the preparation of the C11 standard - I am highly indebted to those on the committee who gave
+so freely of their time and thoughts. My thanks in particular are due to Hans Boehm without whose
+detailed feedback this proposal would look completely different. I would also like to thank Anthony
+Williams for his commentary and feedback, and Nick Stoughton for his advice to me regarding becoming the
+ISO JTC1 SC22 convenor for the Republic of Ireland and on how best to submit a proposal for incorporation
+into the POSIX standard. My thanks are also due to John Benito, WG14 convenor, for his seemingly never
+tiring efforts on the behalf of C-ish programmers everywhere.
 */
 
 #ifdef __cplusplus
@@ -252,7 +283,27 @@ If the permit is non-consuming (pthread_permitnc_t), the permit is still atomica
 the winning thread, but the permit is atomically regranted. You are furthermore guaranteed that exactly
 every waiter at the time of grant will be released before the grant operation returns. Note that
 because of this guarantee, only one grant may occur at any one time per permit instance i.e. grant is a
-critical section.
+critical section. This implies that if a grant is operating, any new waits hold until the grant
+completes.
+
+The parameter of the grant functions is a pthread_permitX_t which denotes any of pthread_permit1_t,
+pthread_permitc_t and pthread_permitnc_t.
+The API of the permit grant has been so unified to allow the following idiom:
+
+\code
+int ask_3rd_party_library_to_do_an_asynchronous_job(..., pthread_permitX_t permit, pthread_permitX_grant_func completionroutine);
+...
+pthread_permitnc_t permit;
+pthread_permitnc_init(&permit);
+ask_3rd_party_library_to_do_an_asynchronous_job(..., &permit, pthread_permitnc_grant);
+...
+// Wait for completion
+pthread_permitnc_wait(&permit);
+\endcode
+
+In other words, client code can supply whichever type of permit it prefers to third party library
+code. That third party library simply calls the supplied completion routine, thus granting the permit.
+
 @{
 */
 //! Grants a pthread_permit1_t
@@ -284,8 +335,6 @@ extern void pthread_permitnc_revoke(pthread_permitnc_t *permit);
 Waits for permit to become available, atomically unlocking the specified mutex when waiting.
 If mtx is NULL, never sleeps instead looping forever waiting for permit. If ts is NULL,
 returns immediately instead of waiting.
-
-\sa pthread_permit_select
 @{
 */
 //! Waits on a pthread_permit1_t
@@ -300,9 +349,9 @@ inline int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t 
 extern int pthread_permitc_timedwait(pthread_permitc_t *permit, pthread_mutex_t *mtx, const struct timespec *ts);
 //! Waits on a pthread_permitnc_t for a time
 extern int pthread_permitnc_timedwait(pthread_permitnc_t *permit, pthread_mutex_t *mtx, const struct timespec *ts);
-//! @}
 
-/*! \returns 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
+/*! \brief Waits on many permits.
+\returns 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
 
 Waits for a time for any permit in the supplied list of permits to become available, 
 atomically unlocking the specified mutex when waiting. If mtx is NULL, never sleeps instead
@@ -314,10 +363,9 @@ so all other elements will be zero.
 On exit, if error then only errored permits are zeroed. In this case many elements can be returned.
 
 The complexity of this call is O(no). If we could use dynamic memory, or had OS support, we could achieve O(1).
-
-\sa pthread_permitX_wait
 */
 extern int pthread_permit_select(size_t no, pthread_permitX_t *permits, pthread_mutex_t *mtx, const struct timespec *ts);
+//! @}
 
 /*! \defgroup pthread_permitnc_associate Permit kernel object association
 \brief Associates a non-consuming permit with a kernel object's state
