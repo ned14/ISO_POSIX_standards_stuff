@@ -29,7 +29,7 @@ DEALINGS IN THE SOFTWARE.
 */
 
 #define SELECT_PERMITS 32
-#define _GLIBCXX_ATOMIC_BUILTINS_4 // Without this tries to use std::exception_ptr which Mingw can't handle
+//#define _GLIBCXX_ATOMIC_BUILTINS_4 // Without this tries to use std::exception_ptr which Mingw can't handle
 
 #define CATCH_CONFIG_RUNNER
 #include "../catch.hpp"
