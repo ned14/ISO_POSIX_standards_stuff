@@ -28,7 +28,7 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#define SELECT_PERMITS MAX_PTHREAD_PERMIT_SELECTS
+#define SELECT_PERMITS 32
 #define _GLIBCXX_ATOMIC_BUILTINS_4 // Without this tries to use std::exception_ptr which Mingw can't handle
 
 #define CATCH_CONFIG_RUNNER
@@ -45,6 +45,44 @@ DEALINGS IN THE SOFTWARE.
 #include "tbb/task_scheduler_init.h"
 #include "tbb/compat/ppl.h"
 #endif
+#endif
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#define read _read
+#define write _write
+#define close _close
+#define pipe(fds) _pipe((fds), 4096, _O_BINARY)
+  struct pollfd { int fd; short events, revents; };
+#define POLLIN 1
+#define POLLOUT 2
+  // Nasty poll() emulation for Windows
+  inline int poll(struct pollfd *fds, size_t nfds, int timeout)
+  {
+    size_t n, successes=0;
+    for(n=0; n<nfds; n++)
+    {
+      fds[n].revents=0;
+      if(fds[n].events&POLLIN)
+      {
+        // MSVCRT doesn't ask for SYNCHRONIZE permissions in pipe() irritatingly
+        //if(WAIT_OBJECT_0==WaitForSingleObject((HANDLE) _get_osfhandle(fds[n].fd), 0)) fds[n].revents|=POLLIN;
+        DWORD bytestogo=0;
+        PeekNamedPipe((HANDLE) _get_osfhandle(fds[n].fd), NULL, 0, NULL, &bytestogo, NULL);
+        if(bytestogo) { fds[n].revents|=POLLIN; successes++; }
+      }
+      if(fds[n].events&POLLOUT)
+      {
+        fds[n].revents|=POLLOUT;
+        successes++;
+      }
+    }
+    return successes;
+  }
+#else
+#include <unistd.h>
+#include <poll.h>
 #endif
 
 #include "pthread_permit.h"
@@ -131,107 +169,118 @@ TEST_CASE("pthread_permit1/grantrevokewait", "Tests that grants cause exactly on
 
 /**************************************** pthread_permit ****************************************/
 
-TEST_CASE("pthread_permitX/interchangeable", "Tests that permit1 and permit objects can not be confused by grant")
+TEST_CASE("pthread_permitX/interchangeable", "Tests that permit1, permitc and permitnc objects can not be confused by grant")
 {
   pthread_permit1_t permit1;
-  pthread_permit_t permit;
+  pthread_permitc_t permitc;
+  pthread_permitnc_t permitnc;
   REQUIRE(0==pthread_permit1_init(&permit1, 0));
-  REQUIRE(0==pthread_permit_init(&permit, 0, 0));
+  REQUIRE(0==pthread_permitc_init(&permitc, 0));
+  REQUIRE(0==pthread_permitnc_init(&permitnc, 0));
 
   pthread_permitX_t somepermit;
   somepermit=&permit1;
   REQUIRE(0==pthread_permit1_grant(somepermit));
-  somepermit=&permit;
-  REQUIRE(0==pthread_permit_grant(somepermit));
+  somepermit=&permitc;
+  REQUIRE(0==pthread_permitc_grant(somepermit));
+  somepermit=&permitnc;
+  REQUIRE(0==pthread_permitnc_grant(somepermit));
 
-  somepermit=&permit;
+  somepermit=&permitc;
   REQUIRE(EINVAL==pthread_permit1_grant(somepermit));
+  REQUIRE(EINVAL==pthread_permitnc_grant(somepermit));
   somepermit=&permit1;
-  REQUIRE(EINVAL==pthread_permit_grant(somepermit));
+  REQUIRE(EINVAL==pthread_permitc_grant(somepermit));
+  REQUIRE(EINVAL==pthread_permitnc_grant(somepermit));
+  somepermit=&permitnc;
+  REQUIRE(EINVAL==pthread_permit1_grant(somepermit));
+  REQUIRE(EINVAL==pthread_permitc_grant(somepermit));
 
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  pthread_permitnc_destroy(&permitnc);
+  REQUIRE(EINVAL==pthread_permitnc_grant(&permitnc));
+  pthread_permitc_destroy(&permitc);
+  REQUIRE(EINVAL==pthread_permitc_grant(&permitc));
   pthread_permit1_destroy(&permit1);
   REQUIRE(EINVAL==pthread_permit1_grant(&permit1));
 }
 
-TEST_CASE("pthread_permit/initdestroy", "Tests repeated init and destroy on same object")
+TEST_CASE("pthread_permitc/initdestroy", "Tests repeated init and destroy on same object")
 {
-  pthread_permit_t permit;
-  REQUIRE(0==pthread_permit_init(&permit, 0, 1));
-  REQUIRE(0==pthread_permit_grant(&permit));
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
-  REQUIRE(0==pthread_permit_init(&permit, 0, 1));
-  REQUIRE(0==pthread_permit_grant(&permit));
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  pthread_permitc_t permit;
+  REQUIRE(0==pthread_permitc_init(&permit, 1));
+  REQUIRE(0==pthread_permitc_grant(&permit));
+  pthread_permitc_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permitc_grant(&permit));
+  REQUIRE(0==pthread_permitc_init(&permit, 1));
+  REQUIRE(0==pthread_permitc_grant(&permit));
+  pthread_permitc_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permitc_grant(&permit));
 }
 
-TEST_CASE("pthread_permit/initwait1", "Tests initially granted doesn't wait, and that grants cause exactly one wait")
+TEST_CASE("pthread_permitc/initwait1", "Tests initially granted doesn't wait, and that grants cause exactly one wait")
 {
-  pthread_permit_t permit;
-  REQUIRE(0==pthread_permit_init(&permit, 0, 1));
-  REQUIRE(0==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  pthread_permitc_t permit;
+  REQUIRE(0==pthread_permitc_init(&permit, 1));
+  REQUIRE(0==pthread_permitc_timedwait(&permit, NULL, NULL));
+  REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permit, NULL, NULL));
+  pthread_permitc_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permitc_grant(&permit));
 }
 
-TEST_CASE("pthread_permit/initwait2", "Tests not initially granted does wait")
+TEST_CASE("pthread_permitc/initwait2", "Tests not initially granted does wait")
 {
-  pthread_permit_t permit;
-  REQUIRE(0==pthread_permit_init(&permit, 0, 0));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  pthread_permitc_t permit;
+  REQUIRE(0==pthread_permitc_init(&permit, 0));
+  REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permit, NULL, NULL));
+  pthread_permitc_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permitc_grant(&permit));
 }
 
-TEST_CASE("pthread_permit/grantwait", "Tests that grants cause exactly one wait")
+TEST_CASE("pthread_permitc/grantwait", "Tests that grants cause exactly one wait")
 {
-  pthread_permit_t permit;
-  REQUIRE(0==pthread_permit_init(&permit, 0, 0));
-  REQUIRE(0==pthread_permit_grant(&permit));
-  REQUIRE(0==pthread_permit_grant(&permit));
-  REQUIRE(0==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  pthread_permitc_t permit;
+  REQUIRE(0==pthread_permitc_init(&permit, 0));
+  REQUIRE(0==pthread_permitc_grant(&permit));
+  REQUIRE(0==pthread_permitc_grant(&permit));
+  REQUIRE(0==pthread_permitc_timedwait(&permit, NULL, NULL));
+  REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permit, NULL, NULL));
+  pthread_permitc_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permitc_grant(&permit));
 }
 
-TEST_CASE("pthread_permit/grantrevokewait", "Tests that grants cause exactly one wait and revoke revokes exactly once")
+TEST_CASE("pthread_permitc/grantrevokewait", "Tests that grants cause exactly one wait and revoke revokes exactly once")
 {
-  pthread_permit_t permit;
-  REQUIRE(0==pthread_permit_init(&permit, 0, 0));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(0==pthread_permit_grant(&permit));
-  pthread_permit_revoke(&permit);
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
+  pthread_permitc_t permit;
+  REQUIRE(0==pthread_permitc_init(&permit, 0));
+  REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permit, NULL, NULL));
+  REQUIRE(0==pthread_permitc_grant(&permit));
+  pthread_permitc_revoke(&permit);
+  REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permit, NULL, NULL));
+  REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permit, NULL, NULL));
 
-  REQUIRE(0==pthread_permit_grant(&permit));
-  REQUIRE(0==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  REQUIRE(0==pthread_permitc_grant(&permit));
+  REQUIRE(0==pthread_permitc_timedwait(&permit, NULL, NULL));
+  REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permit, NULL, NULL));
+  pthread_permitc_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permitc_grant(&permit));
 }
 
-TEST_CASE("pthread_permit/ncgrantrevokewait", "Tests that non-consuming grants disable all waits")
+TEST_CASE("pthread_permitnc/grantrevokewait", "Tests that non-consuming grants disable all waits")
 {
-  pthread_permit_t permit;
-  REQUIRE(0==pthread_permit_init(&permit, PTHREAD_PERMIT_WAITERS_DONT_CONSUME, 0));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(0==pthread_permit_grant(&permit));
-  pthread_permit_revoke(&permit);
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permit, NULL, NULL));
+  pthread_permitnc_t permit;
+  REQUIRE(0==pthread_permitnc_init(&permit, 0));
+  REQUIRE(ETIMEDOUT==pthread_permitnc_timedwait(&permit, NULL, NULL));
+  REQUIRE(0==pthread_permitnc_grant(&permit));
+  pthread_permitnc_revoke(&permit);
+  REQUIRE(ETIMEDOUT==pthread_permitnc_timedwait(&permit, NULL, NULL));
+  REQUIRE(ETIMEDOUT==pthread_permitnc_timedwait(&permit, NULL, NULL));
 
-  REQUIRE(0==pthread_permit_grant(&permit));
-  REQUIRE(0==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(0==pthread_permit_timedwait(&permit, NULL, NULL));
-  REQUIRE(0==pthread_permit_timedwait(&permit, NULL, NULL));
-  pthread_permit_destroy(&permit);
-  REQUIRE(EINVAL==pthread_permit_grant(&permit));
+  REQUIRE(0==pthread_permitnc_grant(&permit));
+  REQUIRE(0==pthread_permitnc_timedwait(&permit, NULL, NULL));
+  REQUIRE(0==pthread_permitnc_timedwait(&permit, NULL, NULL));
+  REQUIRE(0==pthread_permitnc_timedwait(&permit, NULL, NULL));
+  pthread_permitnc_destroy(&permit);
+  REQUIRE(EINVAL==pthread_permitnc_grant(&permit));
 }
 
 
@@ -239,18 +288,18 @@ TEST_CASE("pthread_permit/ncgrantrevokewait", "Tests that non-consuming grants d
 
 TEST_CASE("pthread_permit/non-parallel/selectfirst", "Tests that select does choose the first available permit exactly once")
 {
-  pthread_permit_t permits[SELECT_PERMITS];
+  pthread_permitc_t permits[SELECT_PERMITS];
   size_t n;
   struct timespec ts;
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS; n++)
   {
-    REQUIRE(0==pthread_permit_init(&permits[n], 0, 1));
+    REQUIRE(0==pthread_permitc_init(&permits[n], 1));
   }
   for(n=0; n<SELECT_PERMITS; n++)
   {
     size_t m, selectedpermit=(size_t)-1;
-    pthread_permit_t *parray[SELECT_PERMITS];
+    pthread_permitX_t parray[SELECT_PERMITS];
     for(m=0; m<SELECT_PERMITS; m++)
       parray[m]=&permits[m];
     REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
@@ -266,37 +315,37 @@ TEST_CASE("pthread_permit/non-parallel/selectfirst", "Tests that select does cho
         REQUIRE(parray[m]==0);
     }
     // Ensure the one selected item won't repermit
-    REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+    REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permits[selectedpermit], NULL, NULL));
     // Additionally ensure selected item is sequential
     REQUIRE(selectedpermit==n);
   }
   // Make sure nothing permits now
   {
     size_t m;
-    pthread_permit_t *parray[SELECT_PERMITS];
+    pthread_permitX_t parray[SELECT_PERMITS];
     for(m=0; m<SELECT_PERMITS; m++)
       parray[m]=&permits[m];
     REQUIRE(ETIMEDOUT==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
   }
   for(n=0; n<SELECT_PERMITS; n++)
-    pthread_permit_destroy(&permits[n]);
+    pthread_permitc_destroy(&permits[n]);
 }
 
 #ifdef USE_PARALLEL
 TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose the first available permit exactly once")
 {
-  pthread_permit_t permits[SELECT_PERMITS];
+  pthread_permitc_t permits[SELECT_PERMITS];
   size_t n;
   struct timespec ts;
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS; n++)
   {
-    REQUIRE(0==pthread_permit_init(&permits[n], 0, 1));
+    REQUIRE(0==pthread_permitc_init(&permits[n], 1));
   }
   Concurrency::parallel_for(0, SELECT_PERMITS, [&](size_t n)
   {
     size_t m, selectedpermit=(size_t)-1;
-    pthread_permit_t *parray[SELECT_PERMITS];
+    pthread_permitX_t parray[SELECT_PERMITS];
     for(m=0; m<SELECT_PERMITS; m++)
       parray[m]=&permits[m];
     REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
@@ -312,7 +361,7 @@ TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose 
         REQUIRE(parray[m]==0);
     }
     // Ensure the one selected item won't repermit
-    REQUIRE(ETIMEDOUT==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+    REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permits[selectedpermit], NULL, NULL));
 #if 0
     // Additionally ensure selected item is sequential
     REQUIRE(selectedpermit==n);
@@ -322,106 +371,122 @@ TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose 
   // Make sure nothing permits now
   {
     size_t m;
-    pthread_permit_t *parray[SELECT_PERMITS];
+    pthread_permitX_t parray[SELECT_PERMITS];
     for(m=0; m<SELECT_PERMITS; m++)
       parray[m]=&permits[m];
     REQUIRE(ETIMEDOUT==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
   }
   for(n=0; n<SELECT_PERMITS; n++)
-    pthread_permit_destroy(&permits[n]);
+    pthread_permitc_destroy(&permits[n]);
 }
 #endif
 
 TEST_CASE("pthread_permit/non-parallel/ncselect", "Tests that select does not consume non-consuming permits")
 {
-  pthread_permit_t permits[SELECT_PERMITS];
+  pthread_permitc_t permitcs[SELECT_PERMITS-1];
+  pthread_permitnc_t permitnc;
   size_t n;
   struct timespec ts;
   timespec_get(&ts, TIME_UTC);
-  for(n=0; n<SELECT_PERMITS; n++)
+  for(n=0; n<SELECT_PERMITS-1; n++)
   {
-    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1 ? PTHREAD_PERMIT_WAITERS_DONT_CONSUME : 0, 1));
+    REQUIRE(0==pthread_permitc_init(&permitcs[n], 1));
   }
+  REQUIRE(0==pthread_permitnc_init(&permitnc, 1));
   for(n=0; n<SELECT_PERMITS; n++)
   {
     size_t m, selectedpermit=(size_t)-1;
-    pthread_permit_t *parray[SELECT_PERMITS];
-    for(m=0; m<SELECT_PERMITS; m++)
-      parray[m]=&permits[m];
+    pthread_permitX_t parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS-1; m++)
+      parray[m]=&permitcs[m];
+    parray[m]=&permitnc;
     REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
     // Ensure exactly one item has been selected
     for(m=0; m<SELECT_PERMITS; m++)
     {
       if((size_t)-1==selectedpermit && parray[m])
       {
-        REQUIRE(parray[m]==&permits[m]);
+        REQUIRE((m==SELECT_PERMITS-1 || parray[m]==&permitcs[m]));
         selectedpermit=m;
       }
       else
         REQUIRE(parray[m]==0);
     }
     // Ensure the one selected item won't repermit, except for the NC permit
-    REQUIRE((selectedpermit==SELECT_PERMITS-1 ? 0 : ETIMEDOUT)==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+    if(selectedpermit==SELECT_PERMITS-1)
+      REQUIRE(0==pthread_permitnc_timedwait(&permitnc, NULL, NULL));
+    else
+      REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permitcs[selectedpermit], NULL, NULL));
   }
   // Make sure nothing permits now, except for the NC permit
   {
     size_t m;
-    pthread_permit_t *parray[SELECT_PERMITS];
-    for(m=0; m<SELECT_PERMITS; m++)
-      parray[m]=&permits[m];
+    pthread_permitX_t parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS-1; m++)
+      parray[m]=&permitcs[m];
+    parray[m]=&permitnc;
     REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
     for(m=0; m<SELECT_PERMITS; m++)
-      REQUIRE(parray[m]==(m==SELECT_PERMITS-1 ? &permits[m] : 0));
+      REQUIRE(parray[m]==(m==SELECT_PERMITS-1 ? &permitnc : 0));
   }
-  for(n=0; n<SELECT_PERMITS; n++)
-    pthread_permit_destroy(&permits[n]);
+  for(n=0; n<SELECT_PERMITS-1; n++)
+    pthread_permitc_destroy(&permitcs[n]);
+  pthread_permitnc_destroy(&permitnc);
 }
 
 #ifdef USE_PARALLEL
 TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consume non-consuming permits")
 {
-  pthread_permit_t permits[SELECT_PERMITS];
+  pthread_permitc_t permitcs[SELECT_PERMITS-1];
+  pthread_permitnc_t permitnc;
   size_t n;
   struct timespec ts;
   timespec_get(&ts, TIME_UTC);
-  for(n=0; n<SELECT_PERMITS; n++)
+  for(n=0; n<SELECT_PERMITS-1; n++)
   {
-    REQUIRE(0==pthread_permit_init(&permits[n], n==SELECT_PERMITS-1 ? PTHREAD_PERMIT_WAITERS_DONT_CONSUME : 0, 1));
+    REQUIRE(0==pthread_permitc_init(&permitcs[n], 1));
   }
+  REQUIRE(0==pthread_permitnc_init(&permitnc, 1));
   Concurrency::parallel_for(0, SELECT_PERMITS, [&](size_t n)
   {
     size_t m, selectedpermit=(size_t)-1;
-    pthread_permit_t *parray[SELECT_PERMITS];
-    for(m=0; m<SELECT_PERMITS; m++)
-      parray[m]=&permits[m];
+    pthread_permitX_t parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS-1; m++)
+      parray[m]=&permitcs[m];
+    parray[m]=&permitnc;
     REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
     // Ensure exactly one item has been selected
     for(m=0; m<SELECT_PERMITS; m++)
     {
       if((size_t)-1==selectedpermit && parray[m])
       {
-        REQUIRE(parray[m]==&permits[m]);
+        REQUIRE((m==SELECT_PERMITS-1 || parray[m]==&permitcs[m]));
         selectedpermit=m;
       }
       else
         REQUIRE(parray[m]==0);
     }
     // Ensure the one selected item won't repermit, except for the NC permit
-    REQUIRE((selectedpermit==SELECT_PERMITS-1 ? 0 : ETIMEDOUT)==pthread_permit_timedwait(&permits[selectedpermit], NULL, NULL));
+    if(selectedpermit==SELECT_PERMITS-1)
+      REQUIRE(0==pthread_permitnc_timedwait(&permitnc, NULL, NULL));
+    else
+      REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permitcs[selectedpermit], NULL, NULL));
   }
   );
   // Make sure nothing permits now, except for the NC permit
   {
     size_t m;
-    pthread_permit_t *parray[SELECT_PERMITS];
-    for(m=0; m<SELECT_PERMITS; m++)
-      parray[m]=&permits[m];
+    pthread_permitX_t parray[SELECT_PERMITS];
+    for(m=0; m<SELECT_PERMITS-1; m++)
+      parray[m]=&permitcs[m];
+    parray[m]=&permitnc;
     REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
     for(m=0; m<SELECT_PERMITS; m++)
-      REQUIRE(parray[m]==(m==SELECT_PERMITS-1 ? &permits[m] : 0));
+      REQUIRE(parray[m]==(m==SELECT_PERMITS-1 ? &permitnc : 0));
   }
-  for(n=0; n<SELECT_PERMITS; n++)
-    pthread_permit_destroy(&permits[n]);
+  for(n=0; n<SELECT_PERMITS-1; n++)
+    pthread_permitc_destroy(&permitcs[n]);
+  pthread_permitnc_destroy(&permitnc);
 }
 #endif
 
@@ -430,28 +495,28 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
 
 TEST_CASE("pthread_permit/fdmirroring", "Tests that file descriptor mirroring works as intended")
 {
-  pthread_permit_t permit;
+  pthread_permitnc_t permit;
   int fds[2];
-  pthread_permit_association_t assoc;
+  pthread_permitnc_association_t assoc;
   struct pollfd pfd={0};
   pfd.events=POLLIN;
-  REQUIRE(0==pthread_permit_init(&permit, PTHREAD_PERMIT_WAITERS_DONT_CONSUME, 0));
+  REQUIRE(0==pthread_permitnc_init(&permit, 0));
   REQUIRE(0==pipe(fds));
   pfd.fd=fds[0];
-  REQUIRE(0!=(assoc=pthread_permit_associate_fd(&permit, fds)));
+  REQUIRE(0!=(assoc=pthread_permitnc_associate_fd(&permit, fds)));
 
   REQUIRE(poll(&pfd, 1, 0)>=0);
   REQUIRE(!(pfd.revents&POLLIN));
-  pthread_permit_grant(&permit);
+  pthread_permitnc_grant(&permit);
   REQUIRE(poll(&pfd, 1, 0)>=0);
   REQUIRE(!!(pfd.revents&POLLIN));
-  pthread_permit_revoke(&permit);
+  pthread_permitnc_revoke(&permit);
   REQUIRE(poll(&pfd, 1, 0)>=0);
   REQUIRE(!(pfd.revents&POLLIN));
 
-  pthread_permit_deassociate(&permit, assoc);
+  pthread_permitnc_deassociate(&permit, assoc);
   close(fds[1]); close(fds[0]);
-  pthread_permit_destroy(&permit);
+  pthread_permitnc_destroy(&permit);
 }
 
 

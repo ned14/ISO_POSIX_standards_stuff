@@ -1,0 +1,10 @@
+PROJECT_NAME           = "The POSIX threads permit objects"
+OPTIMIZE_OUTPUT_FOR_C  = YES
+INPUT                  = pthread_permit.h
+SOURCE_BROWSER         = YES
+TYPEDEF_HIDES_STRUCT   = YES
+PREDEFINED             = DOXYGEN_PREPROCESSOR
+HIDE_UNDOC_MEMBERS     = YES
+GENERATE_MAN           = YES
+MAN_LINKS              = YES
+

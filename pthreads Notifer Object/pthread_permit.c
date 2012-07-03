@@ -1,4 +1,4 @@
-/* pthread_permit.h
+/* pthread_permit.c
 Declares and defines the proposed C1X semaphore object
 (C) 2011-2012 Niall Douglas http://www.nedproductions.biz/
 
@@ -28,9 +28,14 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-#ifndef PTHREAD_PERMIT_H
-#define PTHREAD_PERMIT_H
-#include "pthread_permit1.h"
+//! The maximum number of pthread_permit_select which can occur simultaneously
+#define MAX_PTHREAD_PERMIT_SELECTS 64
+//! The magic to use for consuming permits
+#define PERMIT_CONSUMING_PERMIT_MAGIC (*(const unsigned *)"CPER")
+//! The magic to use for non-consuming permits
+#define PERMIT_NONCONSUMING_PERMIT_MAGIC (*(const unsigned *)"NCPR")
+
+#include "pthread_permit.h"
 #include <string.h>
 
 #ifdef _WIN32
@@ -40,7 +45,6 @@ DEALINGS IN THE SOFTWARE.
 #define write _write
 #define close _close
 #define pipe(fds) _pipe((fds), 4096, _O_BINARY)
-extern "C" {
   struct pollfd { int fd; short events, revents; };
 #define POLLIN 1
 #define POLLOUT 2
@@ -67,7 +71,6 @@ extern "C" {
     }
     return successes;
   }
-}
 #else
 #include <unistd.h>
 #include <poll.h>
@@ -77,117 +80,22 @@ extern "C" {
 extern "C" {
 #endif
 
-/*! Define the pthread_permit_t type */
-typedef struct pthread_permit_s pthread_permit_t;
-/*! Define the pthread_permit_hook_t_np type */
-typedef struct pthread_permit_hook_s pthread_permit_hook_t_np;
-typedef struct pthread_permit_hook_s
-{
-  int (*func)(pthread_permit_t *permit, pthread_permit_hook_t_np *hookdata);
-  void *data;
-  pthread_permit_hook_t_np *next;
-} pthread_permit_hook_t_np;
-/*! Define the pthread_permit_association_t type */
-typedef struct pthread_permit_association_s *pthread_permit_association_t;
-/*! Flag indicating waiters don't consume a permit */
-#define PTHREAD_PERMIT_WAITERS_DONT_CONSUME 1
-/*! Type of permit hook routine */
-typedef enum pthread_permit_hook_type_np
-{
-  PTHREAD_PERMIT_HOOK_TYPE_DESTROY,
-  PTHREAD_PERMIT_HOOK_TYPE_GRANT,
-  PTHREAD_PERMIT_HOOK_TYPE_REVOKE,
-  PTHREAD_PERMIT_HOOK_TYPE_WAIT,
-
-  PTHREAD_PERMIT_HOOK_TYPE_LAST
-} pthread_permit_hook_type_t_np;
-
-/*! Creates a permit with initial state. */
-inline int pthread_permit_init(pthread_permit_t *permit, size_t flags, _Bool initial);
-
-/*! Pushes a hook routine which is called when a permit changes state [NON-PORTABLE]. You
-almost certainly want to allocate \em hook statically. hook->next is set to the previous
-hook setting - it is up to you whether to call it in your hook routine however.
-*/
-inline int pthread_permit_pushhook_np(pthread_permit_t *permit, pthread_permit_hook_type_t_np type, pthread_permit_hook_t_np *hook);
-
-/*! Pops a hook routine which is called when a permit changes state [NON-PORTABLE]. Simply
-sets the current hook to hook->next, returning the former hook.
-*/
-inline pthread_permit_hook_t_np *pthread_permit_pophook_np(pthread_permit_t *permit, pthread_permit_hook_type_t_np type);
-
-/*! Destroys a permit */
-inline void pthread_permit_destroy(pthread_permit_t *permit);
-
-/*! Grants permit to all currently waiting threads. If there is no waiting thread, permits the next waiting thread. */
-inline int pthread_permit_grant(pthread_permitX_t permit);
-
-/*! Revoke any outstanding permit, causing any subsequent waiters to wait. */
-inline void pthread_permit_revoke(pthread_permit_t *permit);
-
-/*! Waits for permit to become available, atomically unlocking the specified mutex when waiting.
-If mtx is NULL, never sleeps instead looping forever waiting for permit. */
-inline int pthread_permit_wait(pthread_permit_t *permit, pthread_mutex_t *mtx);
-
-/*! Waits for a time for a permit to become available, atomically unlocking the specified mutex when waiting.
-If mtx is NULL, never sleeps instead looping forever waiting for permit. If ts is NULL,
-returns immediately instead of waiting.
-
-Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
-*/
-inline int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts);
-
-/*! Waits for a time for any permit in the supplied list of permits to become available, 
-atomically unlocking the specified mutex when waiting. If mtx is NULL, never sleeps instead
-looping forever waiting for a permit. If ts is NULL, waits forever.
-
-On exit, the permits array has all ungranted permits zeroed, or if there is an error then
-only errored permits are zeroed. Only the first granted permit is ever returned so if no error then
-only one element of the array will be set on return, but if error then many elements can be returned.
-
-The complexity of this call is O(no). If we could use dynamic memory we could achieve O(1).
-
-Returns: 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
-*/
-inline int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthread_mutex_t *mtx, const struct timespec *ts);
-
-/*! Non-consuming permits only. Sets a file descriptor whose signalled state should match
-the permit's state i.e. the descriptor has a single byte written to it to make it signalled
-when the permit is granted. When the permit is revoked, the descriptor is repeatedly read
-from until it is non-signalled. Note that this mechanism uses the non-portable hook system
-but it does upcall previously installed hooks. Note that this function uses malloc().
-
-Note that this call is not thread safe. Note you must call pthread_permit_deassociate() on the
-returned value before destroying its associated permit.
-*/
-inline pthread_permit_association_t pthread_permit_associate_fd(pthread_permit_t *permit, int fds[2]);
-
-/*! Non-consuming permits only. Removes a previous file descriptor association.
-
-Note that this call is not thread safe.
-*/
-inline void pthread_permit_deassociate(pthread_permit_t *permit, pthread_permit_association_t assoc);
-
-#ifdef _WIN32
-/*! Non-consuming permits only. Sets a windows HANDLE whose signalled state should match
-the permit's state i.e. the handle has a single byte written to it to make it signalled
-when the permit is granted. When the permit is revoked, the handle is repeatedly read
-from until it is non-signalled. Note that this mechanism uses the non-portable hook system
-but it does upcall previously installed hooks. Note that this function uses malloc().
-
-Note that this call is not thread safe.
-*/
-inline pthread_permit_association_t pthread_permit_associate_handle_np(pthread_permit_t *permit, HANDLE h);
-#endif
-
-
-//! The maximum number of pthread_permit_select which can occur simultaneously
-#define MAX_PTHREAD_PERMIT_SELECTS 64
 typedef struct pthread_permit_select_s
 {
   atomic_uint magic;                  /* Used to ensure this structure is valid */
   cnd_t cond;                         /* Wakes anything waiting for a permit */
 } pthread_permit_select_t;
+static pthread_permit_select_t pthread_permit_selects[MAX_PTHREAD_PERMIT_SELECTS];
+typedef struct pthread_permit_s pthread_permit_t;
+typedef struct pthread_permit_hook_s pthread_permit_hook_t;
+typedef struct pthread_permit_hook_s
+{
+  int (*func)(pthread_permit_hook_type_t type, pthread_permit_t *permit, pthread_permit_hook_t *hookdata);
+  void *data;
+  pthread_permit_hook_t *next;
+} pthread_permit_hook_t;
+static char pthread_permitc_hook_t_size_check[sizeof(pthread_permitc_hook_t)==sizeof(pthread_permit_hook_t)];
+static char pthread_permitnc_hook_t_size_check[sizeof(pthread_permitnc_hook_t)==sizeof(pthread_permit_hook_t)];
 typedef struct pthread_permit_s
 { /* NOTE: KEEP THIS HEADER THE SAME AS pthread_permit1_t to allow its grant() to optionally work here */
   atomic_uint magic;                  /* Used to ensure this structure is valid */
@@ -198,32 +106,27 @@ typedef struct pthread_permit_s
   /* Extensions from pthread_permit1_t type */
   unsigned replacePermit;             /* What to replace the permit with when consumed */
   atomic_uint lockWake;               /* Used to exclude new wakers if and only if waiters don't consume */
-  pthread_permit_hook_t_np *RESTRICT hooks[PTHREAD_PERMIT_HOOK_TYPE_LAST];
+  pthread_permit_hook_t *RESTRICT hooks[PTHREAD_PERMIT_HOOK_TYPE_LAST];
   pthread_permit_select_t *volatile RESTRICT selects[MAX_PTHREAD_PERMIT_SELECTS]; /* select permit parent */
 } pthread_permit_t;
-struct pthread_permit_association_s
-{
-  struct pthread_permit_hook_s grant, revoke;
-};
-extern pthread_permit_select_t pthread_permit_selects[MAX_PTHREAD_PERMIT_SELECTS];
-#if 1 // for testing
-pthread_permit_select_t pthread_permit_selects[MAX_PTHREAD_PERMIT_SELECTS];
-#endif // testing
+static char pthread_permitc_t_size_check[sizeof(pthread_permitc_t)==sizeof(pthread_permit_t)];
+static char pthread_permitnc_t_size_check[sizeof(pthread_permitnc_t)==sizeof(pthread_permit_t)];
+#define PTHREAD_PERMIT_WAITERS_DONT_CONSUME 1
 
-int pthread_permit_init(pthread_permit_t *permit, unsigned flags, _Bool initial)
+static int pthread_permit_init(pthread_permit_t *permit, unsigned magic, unsigned flags, _Bool initial)
 {
   memset(permit, 0, sizeof(pthread_permit_t));
   permit->permit=initial;
   if(thrd_success!=cnd_init(&permit->cond)) return thrd_error;
   permit->replacePermit=(flags&PTHREAD_PERMIT_WAITERS_DONT_CONSUME)!=0;
-  atomic_store_explicit(&permit->magic, *(const unsigned *)"PPER", memory_order_seq_cst);
+  atomic_store_explicit(&permit->magic, magic, memory_order_seq_cst);
   return thrd_success;
 }
 
-int pthread_permit_pushhook_np(pthread_permit_t *permit, pthread_permit_hook_type_t_np type, pthread_permit_hook_t_np *hook)
+static int pthread_permit_pushhook(pthread_permit_t *permit, pthread_permit_hook_type_t type, pthread_permit_hook_t *hook)
 {
   unsigned expected;
-  if(*(const unsigned *)"PPER"!=permit->magic || type<0 || type>=PTHREAD_PERMIT_HOOK_TYPE_LAST) return thrd_error;
+  if(type<0 || type>=PTHREAD_PERMIT_HOOK_TYPE_LAST) return thrd_error;
   // Serialise
   while((expected=0, !atomic_compare_exchange_weak_explicit(&permit->lockWake, &expected, 1U, memory_order_relaxed, memory_order_relaxed)))
   {
@@ -235,11 +138,11 @@ int pthread_permit_pushhook_np(pthread_permit_t *permit, pthread_permit_hook_typ
   return thrd_success;
 }
 
-pthread_permit_hook_t_np *pthread_permit_pophook_np(pthread_permit_t *permit, pthread_permit_hook_type_t_np type)
+static pthread_permit_hook_t *pthread_permit_pophook(pthread_permit_t *permit, pthread_permit_hook_type_t type)
 {
   unsigned expected;
-  pthread_permit_hook_t_np *ret;
-  if(*(const unsigned *)"PPER"!=permit->magic || type<0 || type>=PTHREAD_PERMIT_HOOK_TYPE_LAST) { return (pthread_permit_hook_t_np *)(size_t)-1; }
+  pthread_permit_hook_t *ret;
+  if(type<0 || type>=PTHREAD_PERMIT_HOOK_TYPE_LAST) { return (pthread_permit_hook_t *)(size_t)-1; }
   // Serialise
   while((expected=0, !atomic_compare_exchange_weak_explicit(&permit->lockWake, &expected, 1U, memory_order_relaxed, memory_order_relaxed)))
   {
@@ -251,11 +154,10 @@ pthread_permit_hook_t_np *pthread_permit_pophook_np(pthread_permit_t *permit, pt
   return ret;
 }
 
-void pthread_permit_destroy(pthread_permit_t *permit)
+static void pthread_permit_destroy(pthread_permit_t *permit)
 {
-  if(*(const unsigned *)"PPER"!=permit->magic) return;
   if(permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_DESTROY])
-    permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_DESTROY]->func(permit, permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_DESTROY]);
+    permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_DESTROY]->func(PTHREAD_PERMIT_HOOK_TYPE_DESTROY, permit, permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_DESTROY]);
   /* Mark this object as invalid for further use */
   atomic_store_explicit(&permit->magic, 0U, memory_order_seq_cst);
   permit->replacePermit=1;
@@ -263,12 +165,11 @@ void pthread_permit_destroy(pthread_permit_t *permit)
   cnd_destroy(&permit->cond);
 }
 
-int pthread_permit_grant(pthread_permitX_t _permit)
+static int pthread_permit_grant(pthread_permitX_t _permit)
 { // If permits aren't consumed, prevent any new waiters or granters
   pthread_permit_t *permit=(pthread_permit_t *) _permit;
   int ret=thrd_success;
   size_t n;
-  if(*(const unsigned *)"PPER"!=permit->magic) return thrd_error;
   if(permit->replacePermit)
   {
     unsigned expected;
@@ -281,7 +182,7 @@ int pthread_permit_grant(pthread_permitX_t _permit)
   // Grant permit
   atomic_store_explicit(&permit->permit, 1U, memory_order_seq_cst);
   if(permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT])
-    permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT]->func(permit, permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT]);
+    permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT]->func(PTHREAD_PERMIT_HOOK_TYPE_GRANT, permit, permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT]);
   // Are there waiters on the permit?
   if(atomic_load_explicit(&permit->waiters, memory_order_relaxed)!=atomic_load_explicit(&permit->waited, memory_order_relaxed))
   { // There are indeed waiters. If waiters don't consume permits, release everything
@@ -341,19 +242,17 @@ exit:
   return ret;
 }
 
-void pthread_permit_revoke(pthread_permit_t *permit)
+static void pthread_permit_revoke(pthread_permit_t *permit)
 {
-  if(*(const unsigned *)"PPER"!=permit->magic) return;
   atomic_store_explicit(&permit->permit, 0U, memory_order_relaxed);
   if(permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_REVOKE])
-    permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_REVOKE]->func(permit, permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_REVOKE]);
+    permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_REVOKE]->func(PTHREAD_PERMIT_HOOK_TYPE_REVOKE, permit, permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_REVOKE]);
 }
 
-int pthread_permit_wait(pthread_permit_t *permit, pthread_mutex_t *mtx)
+static int pthread_permit_wait(pthread_permit_t *permit, pthread_mutex_t *mtx)
 {
   int ret=thrd_success;
   unsigned expected;
-  if(*(const unsigned *)"PPER"!=permit->magic) return thrd_error;
   // If permits aren't consumed, if a permit is executing then wait here
   if(permit->replacePermit)
   {
@@ -378,12 +277,11 @@ int pthread_permit_wait(pthread_permit_t *permit, pthread_mutex_t *mtx)
   return ret;
 }
 
-int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts)
+static int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, const struct timespec *ts)
 {
   int ret=thrd_success;
   unsigned expected;
   struct timespec now;
-  if(*(const unsigned *)"PPER"!=permit->magic) return thrd_error;
   // If permits aren't consumed, if a permit is executing then wait here
   if(permit->replacePermit)
   {
@@ -400,8 +298,9 @@ int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, con
     if(!ts) { ret=thrd_timeout; break; }
     else
     {
+      long long diff;
       timespec_get(&now, TIME_UTC);
-      long long diff=timespec_diff(ts, &now);
+      diff=timespec_diff(ts, &now);
       if(diff<=0) { ret=thrd_timeout; break; }
     }
     if(mtx)
@@ -416,7 +315,72 @@ int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *mtx, con
   return ret;
 }
 
-int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthread_mutex_t *mtx, const struct timespec *ts)
+// Specialise the above with their extern type safe APIs
+#define PERMIT_IMPL(permittype) \
+int pthread_##permittype##_init(pthread_##permittype##_t *permit, _Bool initial) \
+{ \
+  return pthread_permit_init((pthread_permit_t *) permit, PERMIT_MAGIC, PERMIT_FLAGS, initial); \
+} \
+\
+int pthread_##permittype##_pushhook(pthread_##permittype##_t *permit, pthread_permit_hook_type_t type, pthread_##permittype##_hook_t *hook) \
+{ \
+  if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
+  return pthread_permit_pushhook((pthread_permit_t *) permit, type, (pthread_permit_hook_t *) hook); \
+} \
+\
+pthread_##permittype##_hook_t *pthread_##permittype##_pophook(pthread_##permittype##_t *permit, pthread_permit_hook_type_t type) \
+{ \
+  if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return 0; \
+  return (pthread_##permittype##_hook_t *) pthread_permit_pophook((pthread_permit_t *) permit, type); \
+} \
+\
+void pthread_##permittype##_destroy(pthread_##permittype##_t *permit) \
+{ \
+  if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return; \
+  pthread_permit_destroy((pthread_permit_t *) permit); \
+} \
+\
+int pthread_##permittype##_grant(pthread_permitX_t permit) \
+{ \
+  if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
+  return pthread_permit_grant(permit); \
+} \
+\
+void pthread_##permittype##_revoke(pthread_##permittype##_t *permit) \
+{ \
+  if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return; \
+  pthread_permit_revoke((pthread_permit_t *) permit); \
+} \
+\
+int pthread_##permittype##_wait(pthread_##permittype##_t *permit, pthread_mutex_t *mtx) \
+{ \
+  if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
+  return pthread_permit_wait((pthread_permit_t *) permit, mtx); \
+} \
+\
+int pthread_##permittype##_timedwait(pthread_##permittype##_t *permit, pthread_mutex_t *mtx, const struct timespec *ts) \
+{ \
+  if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
+  return pthread_permit_timedwait((pthread_permit_t *) permit, mtx, ts); \
+}
+
+#define PERMIT permitc
+#define PERMIT_MAGIC PERMIT_CONSUMING_PERMIT_MAGIC
+#define PERMIT_FLAGS 0
+PERMIT_IMPL(permitc)
+#undef PERMIT_FLAGS
+#undef PERMIT_MAGIC
+
+#define PERMIT_MAGIC PERMIT_NONCONSUMING_PERMIT_MAGIC
+#define PERMIT_FLAGS PTHREAD_PERMIT_WAITERS_DONT_CONSUME
+PERMIT_IMPL(permitnc)
+#undef PERMIT_FLAGS
+#undef PERMIT_MAGIC
+
+#undef PERMIT_IMPL
+
+
+static int pthread_permit_select_int(size_t no, pthread_permit_t **RESTRICT permits, pthread_mutex_t *mtx, const struct timespec *ts)
 {
   int ret=thrd_success;
   unsigned expected;
@@ -426,7 +390,7 @@ int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthrea
   // Sanity check permits
   for(n=0; n<no; n++)
   {
-    if(*(const unsigned *)"PPER"!=permits[n]->magic)
+    if(PERMIT_CONSUMING_PERMIT_MAGIC!=permits[n]->magic && PERMIT_NONCONSUMING_PERMIT_MAGIC!=permits[n]->magic)
     {
       permits[n]=0;
       if(thrd_success!=ret) ret=thrd_error;
@@ -484,8 +448,9 @@ int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthrea
     // Permit is not granted, so wait if we have a mutex
     if(ts)
     {
+      long long diff;
       timespec_get(&now, TIME_UTC);
-      long long diff=timespec_diff(ts, &now);
+      diff=timespec_diff(ts, &now);
       if(diff<=0) { ret=thrd_timeout; break; }
     }
     if(mtx)
@@ -512,8 +477,16 @@ int pthread_permit_select(size_t no, pthread_permit_t **RESTRICT permits, pthrea
   myselect->magic=0;
   return ret;
 }
+int pthread_permit_select(size_t no, pthread_permitX_t *permits, pthread_mutex_t *mtx, const struct timespec *ts)
+{
+  return pthread_permit_select_int(no, (pthread_permit_t **RESTRICT) permits, mtx, ts);
+}
 
-int pthread_permit_associate_fd_hook_grant(pthread_permit_t *permit, pthread_permit_hook_t_np *hookdata)
+typedef struct pthread_permitnc_association_s
+{
+  struct pthread_permitnc_hook_s grant, revoke;
+} *pthread_permitnc_association_t;
+static int pthread_permitnc_associate_fd_hook_grant(pthread_permit_hook_type_t type, pthread_permitnc_t *permit, pthread_permitnc_hook_t *hookdata)
 {
   int fd=(int)(size_t)(hookdata->data);
   char buffer=0;
@@ -523,9 +496,9 @@ int pthread_permit_associate_fd_hook_grant(pthread_permit_t *permit, pthread_per
   poll(&pfd, 1, 0);
   if(pfd.revents&POLLOUT)
     write(fd, &buffer, 1);
-  return hookdata->next ? hookdata->next->func(permit, hookdata->next) : 0;
+  return hookdata->next ? hookdata->next->func(type, permit, hookdata->next) : 0;
 }
-int pthread_permit_associate_fd_hook_revoke(pthread_permit_t *permit, pthread_permit_hook_t_np *hookdata)
+static int pthread_permitnc_associate_fd_hook_revoke(pthread_permit_hook_type_t type, pthread_permitnc_t *permit, pthread_permitnc_hook_t *hookdata)
 {
   int fd=(int)(size_t)(hookdata->data);
   char buffer[256];
@@ -539,26 +512,26 @@ int pthread_permit_associate_fd_hook_revoke(pthread_permit_t *permit, pthread_pe
     if(pfd.revents&POLLIN)
       read(fd, buffer, 256);
   } while(pfd.revents&POLLIN);
-  return hookdata->next ? hookdata->next->func(permit, hookdata->next) : 0;
+  return hookdata->next ? hookdata->next->func(type, permit, hookdata->next) : 0;
 }
-pthread_permit_association_t pthread_permit_associate_fd(pthread_permit_t *permit, int fds[2])
+static pthread_permitnc_association_t pthread_permit_associate_fd(pthread_permit_t *permit, int fds[2])
 {
-  pthread_permit_association_t ret;
-  if(*(const unsigned *)"PPER"!=permit->magic || !permit->replacePermit) return 0;
-  ret=(pthread_permit_association_t) calloc(1, sizeof(struct pthread_permit_association_s));
+  pthread_permitnc_association_t ret;
+  if(PERMIT_NONCONSUMING_PERMIT_MAGIC!=permit->magic || !permit->replacePermit) return 0;
+  ret=(pthread_permitnc_association_t) calloc(1, sizeof(struct pthread_permitnc_association_s));
   if(!ret) return ret;
-  ret->grant.func=pthread_permit_associate_fd_hook_grant;
-  ret->revoke.func=pthread_permit_associate_fd_hook_revoke;
+  ret->grant.func=pthread_permitnc_associate_fd_hook_grant;
+  ret->revoke.func=pthread_permitnc_associate_fd_hook_revoke;
   ret->revoke.data=(void *)(size_t) fds[0]; // Revoke reads until empty
   ret->grant.data=(void *)(size_t) fds[1];  // Grant writes a single byte
-  if(thrd_success!=pthread_permit_pushhook_np(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
+  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
   {
     free(ret);
     return 0;
   }
-  if(thrd_success!=pthread_permit_pushhook_np(permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
+  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
   {
-    pthread_permit_pophook_np(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
+    pthread_permit_pophook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
     free(ret);
     return 0;
   }
@@ -569,12 +542,16 @@ pthread_permit_association_t pthread_permit_associate_fd(pthread_permit_t *permi
   }
   return ret;
 }
-
-void pthread_permit_deassociate(pthread_permit_t *permit, pthread_permit_association_t assoc)
+pthread_permitnc_association_t pthread_permitnc_associate_fd(pthread_permitnc_t *permit, int fds[2])
 {
-  pthread_permit_hook_t_np *RESTRICT *hookptr;
-  if(*(const unsigned *)"PPER"!=permit->magic || !permit->replacePermit) return;
-  for(hookptr=&permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT]; *hookptr; hookptr=&(*hookptr)->next)
+  return pthread_permit_associate_fd((pthread_permit_t *) permit, fds);
+}
+
+static void pthread_permit_deassociate(pthread_permit_t *permit, pthread_permitnc_association_t assoc)
+{
+  pthread_permitnc_hook_t *RESTRICT *hookptr;
+  if(PERMIT_NONCONSUMING_PERMIT_MAGIC!=permit->magic || !permit->replacePermit) return;
+  for(hookptr=(pthread_permitnc_hook_t *RESTRICT *) &permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_GRANT]; *hookptr; hookptr=&(*hookptr)->next)
   {
     if(*hookptr==&assoc->grant)
     {
@@ -582,7 +559,7 @@ void pthread_permit_deassociate(pthread_permit_t *permit, pthread_permit_associa
       break;
     }
   }
-  for(hookptr=&permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_REVOKE]; *hookptr; hookptr=&(*hookptr)->next)
+  for(hookptr=(pthread_permitnc_hook_t *RESTRICT *) &permit->hooks[PTHREAD_PERMIT_HOOK_TYPE_REVOKE]; *hookptr; hookptr=&(*hookptr)->next)
   {
     if(*hookptr==&assoc->revoke)
     {
@@ -592,43 +569,47 @@ void pthread_permit_deassociate(pthread_permit_t *permit, pthread_permit_associa
   }
   free(assoc);
 }
+void pthread_permitnc_deassociate(pthread_permitnc_t *permit, pthread_permitnc_association_t assoc)
+{
+  pthread_permit_deassociate((pthread_permit_t *) permit, assoc);
+}
 
 #ifdef _WIN32
-int pthread_permit_associate_handle_hook_grant(pthread_permit_t *permit, pthread_permit_hook_t_np *hookdata)
+static int pthread_permit_associate_winhandle_hook_grant(pthread_permit_hook_type_t type, pthread_permitnc_t *permit, pthread_permitnc_hook_t *hookdata)
 {
   HANDLE h=hookdata->data;
   char buffer=0;
   DWORD written=0;
   if(WAIT_TIMEOUT==WaitForSingleObject(h, 0))
     WriteFile(h, &buffer, 1, &written, NULL);
-  return hookdata->next ? hookdata->next->func(permit, hookdata->next) : 0;
+  return hookdata->next ? hookdata->next->func(type, permit, hookdata->next) : 0;
 }
-int pthread_permit_associate_handle_hook_revoke(pthread_permit_t *permit, pthread_permit_hook_t_np *hookdata)
+static int pthread_permit_associate_winhandle_hook_revoke(pthread_permit_hook_type_t type, pthread_permitnc_t *permit, pthread_permitnc_hook_t *hookdata)
 {
   HANDLE h=hookdata->data;
   char buffer[256];
   DWORD read=0;
   while(WAIT_OBJECT_0==WaitForSingleObject(h, 0))
     ReadFile(h, buffer, 256, &read, NULL);
-  return hookdata->next ? hookdata->next->func(permit, hookdata->next) : 0;
+  return hookdata->next ? hookdata->next->func(type, permit, hookdata->next) : 0;
 }
-pthread_permit_association_t pthread_permit_associate_handle_np(pthread_permit_t *permit, HANDLE h)
+static pthread_permitnc_association_t pthread_permit_associate_winhandle_np(pthread_permit_t *permit, HANDLE h)
 {
-  pthread_permit_association_t ret;
-  if(*(const unsigned *)"PPER"!=permit->magic || !permit->replacePermit) return 0;
-  ret=(pthread_permit_association_t) calloc(1, sizeof(struct pthread_permit_association_s));
+  pthread_permitnc_association_t ret;
+  if(PERMIT_NONCONSUMING_PERMIT_MAGIC!=permit->magic || !permit->replacePermit) return 0;
+  ret=(pthread_permitnc_association_t) calloc(1, sizeof(struct pthread_permitnc_association_s));
   if(!ret) return ret;
-  ret->grant.func=pthread_permit_associate_handle_hook_grant;
-  ret->revoke.func=pthread_permit_associate_handle_hook_revoke;
+  ret->grant.func=pthread_permit_associate_winhandle_hook_grant;
+  ret->revoke.func=pthread_permit_associate_winhandle_hook_revoke;
   ret->grant.data=ret->revoke.data=h;
-  if(thrd_success!=pthread_permit_pushhook_np(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
+  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
   {
     free(ret);
     return 0;
   }
-  if(thrd_success!=pthread_permit_pushhook_np(permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
+  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
   {
-    pthread_permit_pophook_np(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
+    pthread_permit_pophook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
     free(ret);
     return 0;
   }
@@ -640,10 +621,59 @@ pthread_permit_association_t pthread_permit_associate_handle_np(pthread_permit_t
   }
   return ret;
 }
+pthread_permitnc_association_t pthread_permitnc_associate_winhandle_np(pthread_permitnc_t *permit, HANDLE h)
+{
+  return pthread_permit_associate_winhandle_np((pthread_permit_t *) permit, h);
+}
+
+static int pthread_permit_associate_winevent_hook_grant(pthread_permit_hook_type_t type, pthread_permitnc_t *permit, pthread_permitnc_hook_t *hookdata)
+{
+  HANDLE h=hookdata->data;
+  char buffer=0;
+  SetEvent(h);
+  return hookdata->next ? hookdata->next->func(type, permit, hookdata->next) : 0;
+}
+static int pthread_permit_associate_winevent_hook_revoke(pthread_permit_hook_type_t type, pthread_permitnc_t *permit, pthread_permitnc_hook_t *hookdata)
+{
+  HANDLE h=hookdata->data;
+  ResetEvent(h);
+  return hookdata->next ? hookdata->next->func(type, permit, hookdata->next) : 0;
+}
+static pthread_permitnc_association_t pthread_permit_associate_winevent_np(pthread_permit_t *permit, HANDLE h)
+{
+  pthread_permitnc_association_t ret;
+  if(PERMIT_NONCONSUMING_PERMIT_MAGIC!=permit->magic || !permit->replacePermit) return 0;
+  ret=(pthread_permitnc_association_t) calloc(1, sizeof(struct pthread_permitnc_association_s));
+  if(!ret) return ret;
+  ret->grant.func=pthread_permit_associate_winevent_hook_grant;
+  ret->revoke.func=pthread_permit_associate_winevent_hook_revoke;
+  ret->grant.data=ret->revoke.data=h;
+  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
+  {
+    free(ret);
+    return 0;
+  }
+  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
+  {
+    pthread_permit_pophook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
+    free(ret);
+    return 0;
+  }
+  if(permit->permit)
+  {
+    char buffer=0;
+    DWORD written=0;
+    WriteFile(h, &buffer, 1, &written, NULL);
+  }
+  return ret;
+}
+pthread_permitnc_association_t pthread_permitnc_associate_winevent_np(pthread_permitnc_t *permit, HANDLE h)
+{
+  return pthread_permit_associate_winhandle_np((pthread_permit_t *) permit, h);
+}
 #endif
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif

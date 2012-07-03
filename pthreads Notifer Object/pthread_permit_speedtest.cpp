@@ -127,7 +127,6 @@ int main(void)
   int n;
   usCount start;
   pthread_permit1_t permit1;
-  pthread_permit_t permit;
 
   printf("Press key to continue ...\n");
   getchar();
