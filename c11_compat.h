@@ -183,11 +183,13 @@ inline unsigned int atomic_load_explicit(volatile atomic_uint *o, memory_order o
     return *o;
   case memory_order_seq_cst:
   default:
+    {
     atomic_uint ret;
     MemoryBarrier();
     ret=*o;
     MemoryBarrier();
     return ret;
+    }
   }
 }
 inline unsigned int atomic_exchange_explicit(volatile atomic_uint *o, unsigned int v, memory_order order)
@@ -303,9 +305,11 @@ inline int timespec_get(struct timespec *ts, int base)
     ts->tv_nsec=(now%1000)*1000000;
     return base;
   }
-  unsigned long long now=(unsigned long long)(val.QuadPart/scalefactor);
-  ts->tv_sec=now/1000000000;
-  ts->tv_nsec=now%1000000000;
+  {
+    unsigned long long now=(unsigned long long)(val.QuadPart/scalefactor);
+    ts->tv_sec=now/1000000000;
+    ts->tv_nsec=now%1000000000;
+  }
   return base;
 #else
 #ifdef CLOCK_MONOTONIC
