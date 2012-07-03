@@ -342,29 +342,34 @@ TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose 
   {
     REQUIRE(0==pthread_permitc_init(&permits[n], 1));
   }
-  Concurrency::parallel_for(0, SELECT_PERMITS, [&](size_t n)
+  Concurrency::parallel_for(0, SELECT_PERMITS, [&permits, ts](size_t n)
   {
     size_t m, selectedpermit=(size_t)-1;
     pthread_permitX_t parray[SELECT_PERMITS];
+    int ret;
     for(m=0; m<SELECT_PERMITS; m++)
       parray[m]=&permits[m];
-    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    if((0!=(ret=pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts))))
+      REQUIRE(0==ret);
     // Ensure exactly one item has been selected
     for(m=0; m<SELECT_PERMITS; m++)
     {
       if((size_t)-1==selectedpermit && parray[m])
       {
-        REQUIRE(parray[m]==&permits[m]);
+        if(parray[m]!=&permits[m])
+          REQUIRE(parray[m]==&permits[m]);
         selectedpermit=m;
       }
-      else
+      else if(parray[m]!=0)
         REQUIRE(parray[m]==0);
     }
     // Ensure the one selected item won't repermit
-    REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permits[selectedpermit], NULL, NULL));
+    if(ETIMEDOUT!=(ret=pthread_permitc_timedwait(&permits[selectedpermit], NULL, NULL)))
+      REQUIRE(ETIMEDOUT==ret);
 #if 0
     // Additionally ensure selected item is sequential
-    REQUIRE(selectedpermit==n);
+    if(selectedpermit!=n)
+      REQUIRE(selectedpermit==n);
 #endif
   }
   );
@@ -447,30 +452,39 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
     REQUIRE(0==pthread_permitc_init(&permitcs[n], 1));
   }
   REQUIRE(0==pthread_permitnc_init(&permitnc, 1));
-  Concurrency::parallel_for(0, SELECT_PERMITS, [&](size_t n)
+  Concurrency::parallel_for(0, SELECT_PERMITS, [&permitcs, &permitnc, ts](size_t n)
   {
     size_t m, selectedpermit=(size_t)-1;
     pthread_permitX_t parray[SELECT_PERMITS];
+    int ret;
     for(m=0; m<SELECT_PERMITS-1; m++)
       parray[m]=&permitcs[m];
     parray[m]=&permitnc;
-    REQUIRE(0==pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts));
+    if(0!=(ret=pthread_permit_select(SELECT_PERMITS, parray, NULL, &ts)))
+      REQUIRE(0==ret);
     // Ensure exactly one item has been selected
     for(m=0; m<SELECT_PERMITS; m++)
     {
       if((size_t)-1==selectedpermit && parray[m])
       {
-        REQUIRE((m==SELECT_PERMITS-1 || parray[m]==&permitcs[m]));
+        if((m!=SELECT_PERMITS-1 && parray[m]!=&permitcs[m]))
+          REQUIRE((m==SELECT_PERMITS-1 || parray[m]==&permitcs[m]));
         selectedpermit=m;
       }
-      else
+      else if(parray[m]!=0)
         REQUIRE(parray[m]==0);
     }
     // Ensure the one selected item won't repermit, except for the NC permit
     if(selectedpermit==SELECT_PERMITS-1)
-      REQUIRE(0==pthread_permitnc_timedwait(&permitnc, NULL, NULL));
+    {
+      if(0!=(ret=pthread_permitnc_timedwait(&permitnc, NULL, NULL)))
+        REQUIRE(0==ret);
+    }
     else
-      REQUIRE(ETIMEDOUT==pthread_permitc_timedwait(&permitcs[selectedpermit], NULL, NULL));
+    {
+      if(ETIMEDOUT!=(ret=pthread_permitc_timedwait(&permitcs[selectedpermit], NULL, NULL)))
+        REQUIRE(ETIMEDOUT==ret);
+    }
   }
   );
   // Make sure nothing permits now, except for the NC permit
