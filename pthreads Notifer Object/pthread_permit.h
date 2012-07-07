@@ -28,6 +28,8 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
+#define PTHREAD_PERMIT_POSTFIX _np
+
 #ifndef PTHREAD_PERMIT_H
 #define PTHREAD_PERMIT_H
 
@@ -174,9 +176,9 @@ Consuming and non-consuming POSIX threads permit objects can have their operatio
 interested parties. This is used to provide useful extensions such as kernel file descriptor
 state mirroring. The following hooks are available:
 
-* PTHREAD_PERMIT_HOOK_TYPE_DESTROY: Called just before a permit is destroyed.
-* PTHREAD_PERMIT_HOOK_TYPE_GRANT: Called just after a permit is granted, but before waiters are woken.
-* PTHREAD_PERMIT_HOOK_TYPE_REVOKE: Called just after a permit is revoked.
+- PTHREAD_PERMIT_HOOK_TYPE_DESTROY: Called just before a permit is destroyed.
+- PTHREAD_PERMIT_HOOK_TYPE_GRANT: Called just after a permit is granted, but before waiters are woken.
+- PTHREAD_PERMIT_HOOK_TYPE_REVOKE: Called just after a permit is revoked.
 
 pthread_permit_hook_t_np is a structure defined as follows:
 \code
@@ -361,6 +363,9 @@ On exit, if no error the permits array has all ungranted permits zeroed. Only th
 so all other elements will be zero.
 
 On exit, if error then only errored permits are zeroed. In this case many elements can be returned.
+
+Note that the permit array you supply may contain null pointers - if so, these entries are ignored. This
+allows a convenient "rinse and repeat" idiom.
 
 The complexity of this call is O(no). If we could use dynamic memory, or had OS support, we could achieve O(1).
 */

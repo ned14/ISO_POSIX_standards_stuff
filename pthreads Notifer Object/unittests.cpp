@@ -339,12 +339,14 @@ TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose 
   pthread_permitc_t permits[SELECT_PERMITS];
   size_t n;
   struct timespec ts;
+  atomic_uint permitted=0;
+
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS; n++)
   {
     REQUIRE(0==pthread_permitc_init(&permits[n], 1));
   }
-  Concurrency::parallel_for(0, SELECT_PERMITS, [&permits, ts](size_t n)
+  Concurrency::parallel_for(0, SELECT_PERMITS, [&permits, ts, &permitted](size_t n)
   {
     size_t m, selectedpermit=(size_t)-1;
     pthread_permitX_t parray[SELECT_PERMITS];
@@ -372,10 +374,13 @@ TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose 
     // Additionally ensure selected item is sequential
     if(selectedpermit!=n)
       REQUIRE(selectedpermit==n);
+#else
+    atomic_fetch_add_explicit(&permitted, 1, memory_order_relaxed);
 #endif
   }
   );
   // Make sure nothing permits now
+  REQUIRE(permitted==SELECT_PERMITS);
   {
     size_t m;
     pthread_permitX_t parray[SELECT_PERMITS];
@@ -448,13 +453,15 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
   pthread_permitnc_t permitnc;
   size_t n;
   struct timespec ts;
+  atomic_uint permitted=0;
+
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS-1; n++)
   {
     REQUIRE(0==pthread_permitc_init(&permitcs[n], 1));
   }
   REQUIRE(0==pthread_permitnc_init(&permitnc, 1));
-  Concurrency::parallel_for(0, SELECT_PERMITS, [&permitcs, &permitnc, ts](size_t n)
+  Concurrency::parallel_for(0, SELECT_PERMITS, [&permitcs, &permitnc, ts, &permitted](size_t n)
   {
     size_t m, selectedpermit=(size_t)-1;
     pthread_permitX_t parray[SELECT_PERMITS];
@@ -476,6 +483,7 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
       else if(parray[m]!=0)
         REQUIRE(parray[m]==0);
     }
+    atomic_fetch_add_explicit(&permitted, 1, memory_order_relaxed);
     // Ensure the one selected item won't repermit, except for the NC permit
     if(selectedpermit==SELECT_PERMITS-1)
     {
@@ -490,6 +498,7 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
   }
   );
   // Make sure nothing permits now, except for the NC permit
+  REQUIRE(permitted==SELECT_PERMITS);
   {
     size_t m;
     pthread_permitX_t parray[SELECT_PERMITS];

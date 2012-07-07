@@ -134,6 +134,7 @@ static int pthread_permit_pushhook(pthread_permit_t *permit, pthread_permit_hook
   }
   hook->next=permit->hooks[type];
   permit->hooks[type]=hook;
+  // Unlock
   permit->lockWake=0;
   return thrd_success;
 }
@@ -150,6 +151,7 @@ static pthread_permit_hook_t *pthread_permit_pophook(pthread_permit_t *permit, p
   }
   ret=permit->hooks[type];
   permit->hooks[type]=ret->next;
+  // Unlock
   permit->lockWake=0;
   return ret;
 }
@@ -386,18 +388,22 @@ static int pthread_permit_select_int(size_t no, pthread_permit_t **RESTRICT perm
   unsigned expected;
   struct timespec now;
   pthread_permit_select_t *myselect=0;
-  size_t n, replacePermits=0, selectslot=(size_t)-1, selectedpermit=(size_t)-1;
+  size_t n, totalpermits=0, replacePermits=0, selectslot=(size_t)-1, selectedpermit=(size_t)-1;
   // Sanity check permits
   for(n=0; n<no; n++)
   {
-    if(PERMIT_CONSUMING_PERMIT_MAGIC!=permits[n]->magic && PERMIT_NONCONSUMING_PERMIT_MAGIC!=permits[n]->magic)
+    if(permits[n])
     {
-      permits[n]=0;
-      if(thrd_success!=ret) ret=thrd_error;
+      if(PERMIT_CONSUMING_PERMIT_MAGIC!=permits[n]->magic && PERMIT_NONCONSUMING_PERMIT_MAGIC!=permits[n]->magic)
+      {
+        permits[n]=0;
+        if(thrd_success!=ret) ret=thrd_error;
+      }
+      if(permits[n]->replacePermit) replacePermits++;
+      totalpermits++;
     }
-    if(permits[n]->replacePermit) replacePermits++;
   }
-  if(thrd_success!=ret) return ret;
+  if(thrd_success!=ret || !totalpermits) return ret;
   // Find a free slot for us to use
   for(n=0; n<MAX_PTHREAD_PERMIT_SELECTS; n++)
   {
@@ -415,20 +421,23 @@ static int pthread_permit_select_int(size_t no, pthread_permit_t **RESTRICT perm
   // Link each of the permits into our select slot
   for(n=0; n<no; n++)
   {
-    // If the permit isn't consumed, if the permit is executing then wait here
-    if(permits[n]->replacePermit)
+    if(permits[n])
     {
-      while(atomic_load_explicit(&permits[n]->lockWake, memory_order_acquire))
+      // If the permit isn't consumed, if the permit is executing then wait here
+      if(permits[n]->replacePermit)
       {
-        //if(1==cpus) thrd_yield();
+        while(atomic_load_explicit(&permits[n]->lockWake, memory_order_acquire))
+        {
+          //if(1==cpus) thrd_yield();
+        }
+        replacePermits--;
       }
-      replacePermits--;
+      // Increment the monotonic count to indicate we have entered a wait
+      atomic_fetch_add_explicit(&permits[n]->waiters, 1U, memory_order_acquire);
+      // Set the select
+      assert(!permits[n]->selects[selectslot]);
+      permits[n]->selects[selectslot]=myselect;
     }
-    // Increment the monotonic count to indicate we have entered a wait
-    atomic_fetch_add_explicit(&permits[n]->waiters, 1U, memory_order_acquire);
-    // Set the select
-    assert(!permits[n]->selects[selectslot]);
-    permits[n]->selects[selectslot]=myselect;
   }
   assert(!replacePermits);
 
@@ -437,11 +446,14 @@ static int pthread_permit_select_int(size_t no, pthread_permit_t **RESTRICT perm
   {
     for(n=0; n<no; n++)
     {
-      expected=1;
-      if(atomic_compare_exchange_weak_explicit(&permits[n]->permit, &expected, permits[n]->replacePermit, memory_order_relaxed, memory_order_relaxed))
-      { // Permit is granted
-        selectedpermit=n;
-        break;
+      if(permits[n])
+      {
+        expected=1;
+        if(atomic_compare_exchange_weak_explicit(&permits[n]->permit, &expected, permits[n]->replacePermit, memory_order_relaxed, memory_order_relaxed))
+        { // Permit is granted
+          selectedpermit=n;
+          break;
+        }
       }
     }
     if((size_t)-1!=selectedpermit) break;
@@ -464,13 +476,16 @@ static int pthread_permit_select_int(size_t no, pthread_permit_t **RESTRICT perm
   // Delink each of the permits from our select slot
   for(n=0; n<no; n++)
   {
-    // Unset the select
-    assert(permits[n]->selects[selectslot]==myselect);
-    permits[n]->selects[selectslot]=0;
-    // Increment the monotonic count to indicate we have exited a wait
-    atomic_fetch_add_explicit(&permits[n]->waited, 1U, memory_order_relaxed);
-    // Zero if not selected
-    if(selectedpermit!=n) permits[n]=0;
+    if(permits[n])
+    {
+      // Unset the select
+      assert(permits[n]->selects[selectslot]==myselect);
+      permits[n]->selects[selectslot]=0;
+      // Increment the monotonic count to indicate we have exited a wait
+      atomic_fetch_add_explicit(&permits[n]->waited, 1U, memory_order_relaxed);
+      // Zero if not selected
+      if(selectedpermit!=n) permits[n]=0;
+    }
   }
   // Destroy the select slot's condition variable and reset
   cnd_destroy(&myselect->cond);
