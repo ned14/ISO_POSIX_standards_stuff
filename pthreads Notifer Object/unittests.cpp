@@ -42,7 +42,9 @@ DEALINGS IN THE SOFTWARE.
 #include <ppl.h>
 #else
 // Use Intel's Threading Building Blocks compatibility layer for the PPL
-//#define TBB_USE_CAPTURED_EXCEPTION 1 // Without this tries to use std::exception_ptr which Mingw can't handle
+#ifdef __MINGW32__
+#define TBB_USE_CAPTURED_EXCEPTION 1 // Without this tries to use std::exception_ptr which Mingw can't handle
+#endif
 #include "tbb/parallel_for.h"
 #include "tbb/task_scheduler_init.h"
 #include "tbb/compat/ppl.h"
@@ -339,7 +341,8 @@ TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose 
   pthread_permitc_t permits[SELECT_PERMITS];
   size_t n;
   struct timespec ts;
-  atomic_uint permitted=0;
+  atomic_uint permitted;
+  permitted=0;
 
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS; n++)
@@ -375,12 +378,12 @@ TEST_CASE("pthread_permit/parallel/selectfirst", "Tests that select does choose 
     if(selectedpermit!=n)
       REQUIRE(selectedpermit==n);
 #else
-    atomic_fetch_add_explicit(&permitted, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&permitted, 1U, memory_order_relaxed);
 #endif
   }
   );
   // Make sure nothing permits now
-  REQUIRE(permitted==SELECT_PERMITS);
+  REQUIRE((atomic_load_explicit(&permitted, memory_order_relaxed))==SELECT_PERMITS);
   {
     size_t m;
     pthread_permitX_t parray[SELECT_PERMITS];
@@ -453,7 +456,8 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
   pthread_permitnc_t permitnc;
   size_t n;
   struct timespec ts;
-  atomic_uint permitted=0;
+  atomic_uint permitted;
+  permitted=0;
 
   timespec_get(&ts, TIME_UTC);
   for(n=0; n<SELECT_PERMITS-1; n++)
@@ -483,7 +487,7 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
       else if(parray[m]!=0)
         REQUIRE(parray[m]==0);
     }
-    atomic_fetch_add_explicit(&permitted, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&permitted, 1U, memory_order_relaxed);
     // Ensure the one selected item won't repermit, except for the NC permit
     if(selectedpermit==SELECT_PERMITS-1)
     {
@@ -498,7 +502,7 @@ TEST_CASE("pthread_permit/parallel/ncselect", "Tests that select does not consum
   }
   );
   // Make sure nothing permits now, except for the NC permit
-  REQUIRE(permitted==SELECT_PERMITS);
+  REQUIRE((atomic_load_explicit(&permitted, memory_order_relaxed))==SELECT_PERMITS);
   {
     size_t m;
     pthread_permitX_t parray[SELECT_PERMITS];

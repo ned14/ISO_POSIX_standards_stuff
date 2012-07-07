@@ -70,15 +70,15 @@ DEALINGS IN THE SOFTWARE.
 #define memory_order_acq_rel std::memory_order::memory_order_acq_rel
 #define memory_order_seq_cst std::memory_order::memory_order_seq_cst
 
-typedef std::atomic<unsigned int> atomic_uint;
-using std::atomic_init;
-using std::atomic_thread_fence;
-using std::atomic_store_explicit;
-using std::atomic_load_explicit;
-using std::atomic_exchange_explicit;
-using std::atomic_compare_exchange_weak_explicit;
-using std::atomic_compare_exchange_strong_explicit;
-using std::atomic_fetch_add_explicit;
+#define atomic_uint std::atomic<unsigned int>
+#define atomic_init std::atomic_init
+#define atomic_thread_fence std::atomic_thread_fence
+#define atomic_store_explicit std::atomic_store_explicit
+#define atomic_load_explicit std::atomic_load_explicit
+#define atomic_exchange_explicit std::atomic_exchange_explicit
+#define atomic_compare_exchange_weak_explicit std::atomic_compare_exchange_weak_explicit
+#define atomic_compare_exchange_strong_explicit std::atomic_compare_exchange_strong_explicit
+#define atomic_fetch_add_explicit std::atomic_fetch_add_explicit
 #endif
 
 /* We need inline */
