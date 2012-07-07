@@ -319,48 +319,48 @@ static int pthread_permit_timedwait(pthread_permit_t *permit, pthread_mutex_t *m
 
 // Specialise the above with their extern type safe APIs
 #define PERMIT_IMPL(permittype) \
-int pthread_##permittype##_init(pthread_##permittype##_t *permit, _Bool initial) \
+PTHREAD_PERMIT_API_DEFINE(int, permittype##_init, (pthread_##permittype##_t *permit, _Bool initial)) \
 { \
   return pthread_permit_init((pthread_permit_t *) permit, PERMIT_MAGIC, PERMIT_FLAGS, initial); \
 } \
 \
-int pthread_##permittype##_pushhook(pthread_##permittype##_t *permit, pthread_permit_hook_type_t type, pthread_##permittype##_hook_t *hook) \
+PTHREAD_PERMIT_API_DEFINE(int, permittype##_pushhook, (pthread_##permittype##_t *permit, pthread_permit_hook_type_t type, pthread_##permittype##_hook_t *hook)) \
 { \
   if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
   return pthread_permit_pushhook((pthread_permit_t *) permit, type, (pthread_permit_hook_t *) hook); \
 } \
 \
-pthread_##permittype##_hook_t *pthread_##permittype##_pophook(pthread_##permittype##_t *permit, pthread_permit_hook_type_t type) \
+PTHREAD_PERMIT_API_DEFINE(pthread_##permittype##_hook_t *, permittype##_pophook, (pthread_##permittype##_t *permit, pthread_permit_hook_type_t type)) \
 { \
   if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return 0; \
   return (pthread_##permittype##_hook_t *) pthread_permit_pophook((pthread_permit_t *) permit, type); \
 } \
 \
-void pthread_##permittype##_destroy(pthread_##permittype##_t *permit) \
+PTHREAD_PERMIT_API_DEFINE(void , permittype##_destroy, (pthread_##permittype##_t *permit)) \
 { \
   if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return; \
   pthread_permit_destroy((pthread_permit_t *) permit); \
 } \
 \
-int pthread_##permittype##_grant(pthread_permitX_t permit) \
+PTHREAD_PERMIT_API_DEFINE(int , permittype##_grant, (pthread_permitX_t permit)) \
 { \
   if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
   return pthread_permit_grant(permit); \
 } \
 \
-void pthread_##permittype##_revoke(pthread_##permittype##_t *permit) \
+PTHREAD_PERMIT_API_DEFINE(void , permittype##_revoke, (pthread_##permittype##_t *permit)) \
 { \
   if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return; \
   pthread_permit_revoke((pthread_permit_t *) permit); \
 } \
 \
-int pthread_##permittype##_wait(pthread_##permittype##_t *permit, pthread_mutex_t *mtx) \
+PTHREAD_PERMIT_API_DEFINE(int , permittype##_wait, (pthread_##permittype##_t *permit, pthread_mutex_t *mtx)) \
 { \
   if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
   return pthread_permit_wait((pthread_permit_t *) permit, mtx); \
 } \
 \
-int pthread_##permittype##_timedwait(pthread_##permittype##_t *permit, pthread_mutex_t *mtx, const struct timespec *ts) \
+PTHREAD_PERMIT_API_DEFINE(int , permittype##_timedwait, (pthread_##permittype##_t *permit, pthread_mutex_t *mtx, const struct timespec *ts)) \
 { \
   if(PERMIT_MAGIC!=((pthread_permit_t *) permit)->magic) return thrd_error; \
   return pthread_permit_timedwait((pthread_permit_t *) permit, mtx, ts); \
@@ -492,7 +492,7 @@ static int pthread_permit_select_int(size_t no, pthread_permit_t **RESTRICT perm
   myselect->magic=0;
   return ret;
 }
-int pthread_permit_select(size_t no, pthread_permitX_t *permits, pthread_mutex_t *mtx, const struct timespec *ts)
+PTHREAD_PERMIT_API_DEFINE(int , permit_select, (size_t no, pthread_permitX_t *permits, pthread_mutex_t *mtx, const struct timespec *ts))
 {
   return pthread_permit_select_int(no, (pthread_permit_t **RESTRICT) permits, mtx, ts);
 }
@@ -539,12 +539,12 @@ static pthread_permitnc_association_t pthread_permit_associate_fd(pthread_permit
   ret->revoke.func=pthread_permitnc_associate_fd_hook_revoke;
   ret->revoke.data=(void *)(size_t) fds[0]; // Revoke reads until empty
   ret->grant.data=(void *)(size_t) fds[1];  // Grant writes a single byte
-  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
+  if(thrd_success!=pthread_permit_pushhook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, (pthread_permit_hook_t *) &ret->grant))
   {
     free(ret);
     return 0;
   }
-  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
+  if(thrd_success!=pthread_permit_pushhook(permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, (pthread_permit_hook_t *) &ret->revoke))
   {
     pthread_permit_pophook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
     free(ret);
@@ -557,7 +557,7 @@ static pthread_permitnc_association_t pthread_permit_associate_fd(pthread_permit
   }
   return ret;
 }
-pthread_permitnc_association_t pthread_permitnc_associate_fd(pthread_permitnc_t *permit, int fds[2])
+PTHREAD_PERMIT_API_DEFINE(pthread_permitnc_association_t , permitnc_associate_fd, (pthread_permitnc_t *permit, int fds[2]))
 {
   return pthread_permit_associate_fd((pthread_permit_t *) permit, fds);
 }
@@ -584,7 +584,7 @@ static void pthread_permit_deassociate(pthread_permit_t *permit, pthread_permitn
   }
   free(assoc);
 }
-void pthread_permitnc_deassociate(pthread_permitnc_t *permit, pthread_permitnc_association_t assoc)
+PTHREAD_PERMIT_API_DEFINE(void , permitnc_deassociate, (pthread_permitnc_t *permit, pthread_permitnc_association_t assoc))
 {
   pthread_permit_deassociate((pthread_permit_t *) permit, assoc);
 }
@@ -617,12 +617,12 @@ static pthread_permitnc_association_t pthread_permit_associate_winhandle_np(pthr
   ret->grant.func=pthread_permit_associate_winhandle_hook_grant;
   ret->revoke.func=pthread_permit_associate_winhandle_hook_revoke;
   ret->grant.data=ret->revoke.data=h;
-  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
+  if(thrd_success!=pthread_permit_pushhook( permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, (pthread_permit_hook_t *) &ret->grant))
   {
     free(ret);
     return 0;
   }
-  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
+  if(thrd_success!=pthread_permit_pushhook(permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, (pthread_permit_hook_t *) &ret->revoke))
   {
     pthread_permit_pophook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
     free(ret);
@@ -636,7 +636,7 @@ static pthread_permitnc_association_t pthread_permit_associate_winhandle_np(pthr
   }
   return ret;
 }
-pthread_permitnc_association_t pthread_permitnc_associate_winhandle_np(pthread_permitnc_t *permit, HANDLE h)
+PTHREAD_PERMIT_API_DEFINENP(pthread_permitnc_association_t , permitnc_associate_winhandle, (pthread_permitnc_t *permit, HANDLE h))
 {
   return pthread_permit_associate_winhandle_np((pthread_permit_t *) permit, h);
 }
@@ -663,12 +663,12 @@ static pthread_permitnc_association_t pthread_permit_associate_winevent_np(pthre
   ret->grant.func=pthread_permit_associate_winevent_hook_grant;
   ret->revoke.func=pthread_permit_associate_winevent_hook_revoke;
   ret->grant.data=ret->revoke.data=h;
-  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, &ret->grant))
+  if(thrd_success!=pthread_permit_pushhook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT, (pthread_permit_hook_t *) &ret->grant))
   {
     free(ret);
     return 0;
   }
-  if(thrd_success!=pthread_permitnc_pushhook((pthread_permitnc_t *) permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, &ret->revoke))
+  if(thrd_success!=pthread_permit_pushhook(permit, PTHREAD_PERMIT_HOOK_TYPE_REVOKE, (pthread_permit_hook_t *) &ret->revoke))
   {
     pthread_permit_pophook(permit, PTHREAD_PERMIT_HOOK_TYPE_GRANT);
     free(ret);
@@ -682,7 +682,7 @@ static pthread_permitnc_association_t pthread_permit_associate_winevent_np(pthre
   }
   return ret;
 }
-pthread_permitnc_association_t pthread_permitnc_associate_winevent_np(pthread_permitnc_t *permit, HANDLE h)
+PTHREAD_PERMIT_API_DEFINENP(pthread_permitnc_association_t , permitnc_associate_winevent, (pthread_permitnc_t *permit, HANDLE h))
 {
   return pthread_permit_associate_winhandle_np((pthread_permit_t *) permit, h);
 }

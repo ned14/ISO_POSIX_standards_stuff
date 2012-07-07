@@ -28,10 +28,6 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 
-/* Used to set what symbols are told for library export */
-#define PTHREAD_PERMIT_API_PREFIX pthread_
-#define PTHREAD_PERMIT_API_POSTFIX _np
-
 #ifndef PTHREAD_PERMIT_H
 #define PTHREAD_PERMIT_H
 
@@ -45,15 +41,32 @@ typedef mtx_t pthread_mutex_t;
 #include <assert.h>
 #endif // DOXYGEN_PREPROCESSOR
 
-#if !defined(PTHREAD_PERMIT_API) && defined(_USRDLL)
+#if !defined(PTHREAD_PERMIT_APIEXPORT) && defined(_USRDLL)
 #ifdef _WIN32
-#define PTHREAD_PERMIT_API(x) extern __declspec(dllexport) x
+#define PTHREAD_PERMIT_APIEXPORT extern __declspec(dllexport)
 #elif defined(__GNUC__) || defined (__clang__)
-#define PTHREAD_PERMIT_API(x) extern __attribute__ ((visibility("default"))) x
+#define PTHREAD_PERMIT_APIEXPORT extern __attribute__ ((visibility("default")))
 #endif
 #endif
+//! Adjust this to set how extern API is exported. NOTE: defining _USRDLL does the right thing on GCC, Clang and MSVC.
+#ifndef PTHREAD_PERMIT_APIEXPORT
+#define PTHREAD_PERMIT_APIEXPORT extern
+#endif
+//! Adjust this to change extern API prefix and postfix. By default set to "pthread_" and "_np" respectively.
 #ifndef PTHREAD_PERMIT_API
-#define PTHREAD_PERMIT_API(x) extern x
+#define PTHREAD_PERMIT_API(ret, api, params) PTHREAD_PERMIT_APIEXPORT ret pthread_##api##_np params
+#endif
+//! Adjust this to change extern API prefix and postfix. By default set to "pthread_" and "_np" respectively.
+#ifndef PTHREAD_PERMIT_API_DEFINE
+#define PTHREAD_PERMIT_API_DEFINE(ret, api, params) ret pthread_##api##_np params
+#endif
+//! Adjust this to change non-portable extern API prefix (e.g. Windows-only APIs). By default set to "pthread_".
+#ifndef PTHREAD_PERMIT_APINP
+#define PTHREAD_PERMIT_APINP(ret, api, params) PTHREAD_PERMIT_APIEXPORT ret pthread_##api##_np params
+#endif
+//! Adjust this to change non-portable extern API prefix (e.g. Windows-only APIs). By default set to "pthread_".
+#ifndef PTHREAD_PERMIT_API_DEFINENP
+#define PTHREAD_PERMIT_API_DEFINENP(ret, api, params) ret pthread_##api##_np params
 #endif
 
 /*! \mainpage The POSIX threads permit objects
@@ -250,13 +263,13 @@ typedef struct pthread_permitnc_hook_s
   pthread_permitnc_hook_t *next;
 } pthread_permitnc_hook_t;
 //! Pushes a hook
-PTHREAD_PERMIT_API(int pthread_permitc_pushhook(pthread_permitc_t *permit, pthread_permit_hook_type_t type, pthread_permitc_hook_t *hook));
+PTHREAD_PERMIT_API(int , permitc_pushhook, (pthread_permitc_t *permit, pthread_permit_hook_type_t type, pthread_permitc_hook_t *hook));
 //! Pushes a hook
-PTHREAD_PERMIT_API(int pthread_permitnc_pushhook(pthread_permitnc_t *permit, pthread_permit_hook_type_t type, pthread_permitnc_hook_t *hook));
+PTHREAD_PERMIT_API(int , permitnc_pushhook, (pthread_permitnc_t *permit, pthread_permit_hook_type_t type, pthread_permitnc_hook_t *hook));
 //! Pops a hook
-PTHREAD_PERMIT_API(pthread_permitc_hook_t *pthread_permitc_pophook(pthread_permitc_t *permit, pthread_permit_hook_type_t type));
+PTHREAD_PERMIT_API(pthread_permitc_hook_t *, permitc_pophook, (pthread_permitc_t *permit, pthread_permit_hook_type_t type));
 //! Pops a hook
-PTHREAD_PERMIT_API(pthread_permitnc_hook_t *pthread_permitnc_pophook(pthread_permitnc_t *permit, pthread_permit_hook_type_t type));
+PTHREAD_PERMIT_API(pthread_permitnc_hook_t *, permitnc_pophook, (pthread_permitnc_t *permit, pthread_permit_hook_type_t type));
 //! @}
 
 
@@ -268,9 +281,9 @@ PTHREAD_PERMIT_API(pthread_permitnc_hook_t *pthread_permitnc_pophook(pthread_per
 //! Initialises a pthread_permit1_t
 inline int pthread_permit1_init(pthread_permit1_t *permit, _Bool initial);
 //! Initialises a pthread_permitc_t
-PTHREAD_PERMIT_API(int pthread_permitc_init(pthread_permitc_t *permit, _Bool initial));
+PTHREAD_PERMIT_API(int , permitc_init, (pthread_permitc_t *permit, _Bool initial));
 //! Initialises a pthread_permitnc_t
-PTHREAD_PERMIT_API(int pthread_permitnc_init(pthread_permitnc_t *permit, _Bool initial));
+PTHREAD_PERMIT_API(int , permitnc_init, (pthread_permitnc_t *permit, _Bool initial));
 //! @}
 
 /*! \defgroup pthread_permitX_destroy Permit destruction
@@ -280,9 +293,9 @@ PTHREAD_PERMIT_API(int pthread_permitnc_init(pthread_permitnc_t *permit, _Bool i
 //! Destroys a pthread_permit1_t
 inline void pthread_permit1_destroy(pthread_permit1_t *permit);
 //! Destroys a pthread_permitc_t
-PTHREAD_PERMIT_API(void pthread_permitc_destroy(pthread_permitc_t *permit));
+PTHREAD_PERMIT_API(void , permitc_destroy, (pthread_permitc_t *permit));
 //! Destroys a pthread_permitnc_t
-PTHREAD_PERMIT_API(void pthread_permitnc_destroy(pthread_permitnc_t *permit));
+PTHREAD_PERMIT_API(void , permitnc_destroy, (pthread_permitnc_t *permit));
 //! @}
 
 /*! \defgroup pthread_permitX_grant Permit granting
@@ -324,9 +337,9 @@ code. That third party library simply calls the supplied completion routine, thu
 //! Grants a pthread_permit1_t
 inline int pthread_permit1_grant(pthread_permitX_t permit);
 //! Grants a pthread_permitc_t
-PTHREAD_PERMIT_API(int pthread_permitc_grant(pthread_permitX_t permit));
+PTHREAD_PERMIT_API(int , permitc_grant, (pthread_permitX_t permit));
 //! Grants a pthread_permitnc_t
-PTHREAD_PERMIT_API(int pthread_permitnc_grant(pthread_permitX_t permit));
+PTHREAD_PERMIT_API(int , permitnc_grant, (pthread_permitX_t permit));
 //! @}
 
 /*! \defgroup pthread_permitX_revoke Permit revoking
@@ -338,9 +351,9 @@ Revoke any outstanding permit, causing any subsequent waiters to wait.
 //! Revokes a pthread_permit1_t
 inline void pthread_permit1_revoke(pthread_permit1_t *permit);
 //! Revokes a pthread_permitc_t
-PTHREAD_PERMIT_API(void pthread_permitc_revoke(pthread_permitc_t *permit));
+PTHREAD_PERMIT_API(void , permitc_revoke, (pthread_permitc_t *permit));
 //! Revokes a pthread_permitnc_t
-PTHREAD_PERMIT_API(void pthread_permitnc_revoke(pthread_permitnc_t *permit));
+PTHREAD_PERMIT_API(void , permitnc_revoke, (pthread_permitnc_t *permit));
 //! @}
 
 /*! \defgroup pthread_permitX_wait Permit waiting
@@ -355,15 +368,15 @@ returns immediately instead of waiting.
 //! Waits on a pthread_permit1_t
 inline int pthread_permit1_wait(pthread_permit1_t *permit, pthread_mutex_t *mtx);
 //! Waits on a pthread_permitc_t
-PTHREAD_PERMIT_API(int pthread_permitc_wait(pthread_permitc_t *permit, pthread_mutex_t *mtx));
+PTHREAD_PERMIT_API(int , permitc_wait, (pthread_permitc_t *permit, pthread_mutex_t *mtx));
 //! Waits on a pthread_permitnc_t
-PTHREAD_PERMIT_API(int pthread_permitnc_wait(pthread_permitnc_t *permit, pthread_mutex_t *mtx));
+PTHREAD_PERMIT_API(int , permitnc_wait, (pthread_permitnc_t *permit, pthread_mutex_t *mtx));
 //! Waits on a pthread_permit1_t for a time
 inline int pthread_permit1_timedwait(pthread_permit1_t *permit, pthread_mutex_t *mtx, const struct timespec *ts);
 //! Waits on a pthread_permitc_t for a time
-PTHREAD_PERMIT_API(int pthread_permitc_timedwait(pthread_permitc_t *permit, pthread_mutex_t *mtx, const struct timespec *ts));
+PTHREAD_PERMIT_API(int , permitc_timedwait, (pthread_permitc_t *permit, pthread_mutex_t *mtx, const struct timespec *ts));
 //! Waits on a pthread_permitnc_t for a time
-PTHREAD_PERMIT_API(int pthread_permitnc_timedwait(pthread_permitnc_t *permit, pthread_mutex_t *mtx, const struct timespec *ts));
+PTHREAD_PERMIT_API(int , permitnc_timedwait, (pthread_permitnc_t *permit, pthread_mutex_t *mtx, const struct timespec *ts));
 
 /*! \brief Waits on many permits.
 \returns 0: success; EINVAL: bad permit, mutex or timespec; ETIMEDOUT: the time period specified by ts expired.
@@ -382,7 +395,7 @@ allows a convenient "rinse and repeat" idiom.
 
 The complexity of this call is O(no). If we could use dynamic memory, or had OS support, we could achieve O(1).
 */
-PTHREAD_PERMIT_API(int pthread_permit_select(size_t no, pthread_permitX_t *permits, pthread_mutex_t *mtx, const struct timespec *ts));
+PTHREAD_PERMIT_API(int , permit_select, (size_t no, pthread_permitX_t *permits, pthread_mutex_t *mtx, const struct timespec *ts));
 //! @}
 
 /*! \defgroup pthread_permitnc_associate Permit kernel object association
@@ -411,15 +424,15 @@ on Windows.
 //! The type of a permit association handle
 typedef struct pthread_permitnc_association_s *pthread_permitnc_association_t;
 //! Associates the state of a kernel file descriptor with the state of a pthread_permitnc_t
-PTHREAD_PERMIT_API(pthread_permitnc_association_t pthread_permitnc_associate_fd(pthread_permitnc_t *permit, int fds[2]));
+PTHREAD_PERMIT_API(pthread_permitnc_association_t , permitnc_associate_fd, (pthread_permitnc_t *permit, int fds[2]));
 //! Deassociates the state of a kernel file descriptor with the state of a pthread_permitnc_t
-PTHREAD_PERMIT_API(void pthread_permitnc_deassociate(pthread_permitnc_t *permit, pthread_permitnc_association_t assoc));
+PTHREAD_PERMIT_API(void , permitnc_deassociate, (pthread_permitnc_t *permit, pthread_permitnc_association_t assoc));
 
 #if defined(_WIN32) || defined(DOXYGEN_PREPROCESSOR)
 //! Associates the state of a Windows kernel file handle with the state of a pthread_permitnc_t
-PTHREAD_PERMIT_API(pthread_permitnc_association_t pthread_permitnc_associate_winhandle_np(pthread_permitnc_t *permit, HANDLE h));
+PTHREAD_PERMIT_APINP(pthread_permitnc_association_t , permitnc_associate_winhandle, (pthread_permitnc_t *permit, HANDLE h));
 //! Associates the state of a Windows kernel event handle with the state of a pthread_permitnc_t
-PTHREAD_PERMIT_API(pthread_permitnc_association_t pthread_permitnc_associate_winevent_np(pthread_permitnc_t *permit, HANDLE h));
+PTHREAD_PERMIT_APINP(pthread_permitnc_association_t , permitnc_associate_winevent, (pthread_permitnc_t *permit, HANDLE h));
 #endif
 //! @}
 
