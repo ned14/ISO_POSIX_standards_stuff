@@ -53,20 +53,25 @@ typedef mtx_t pthread_mutex_t;
 #define PTHREAD_PERMIT_APIEXPORT extern
 #endif
 //! Adjust this to change extern API prefix and postfix. By default set to "pthread_" and "_np" respectively.
+#ifndef PTHREAD_PERMIT_MANGLEAPI
+#define PTHREAD_PERMIT_MANGLEAPI(api) pthread_##api##_np
+#endif
+//! Adjust this to change non-portable extern API prefix (e.g. Windows-only APIs). By default set to "pthread_".
+#ifndef PTHREAD_PERMIT_MANGLEAPINP
+#define PTHREAD_PERMIT_MANGLEAPINP(api) pthread_##api##_np
+#endif
+
 #ifndef PTHREAD_PERMIT_API
-#define PTHREAD_PERMIT_API(ret, api, params) PTHREAD_PERMIT_APIEXPORT ret pthread_##api##_np params
+#define PTHREAD_PERMIT_API(ret, api, params) PTHREAD_PERMIT_APIEXPORT ret PTHREAD_PERMIT_MANGLEAPI(api) params
 #endif
-//! Adjust this to change extern API prefix and postfix. By default set to "pthread_" and "_np" respectively.
 #ifndef PTHREAD_PERMIT_API_DEFINE
-#define PTHREAD_PERMIT_API_DEFINE(ret, api, params) ret pthread_##api##_np params
+#define PTHREAD_PERMIT_API_DEFINE(ret, api, params) ret PTHREAD_PERMIT_MANGLEAPI(api) params
 #endif
-//! Adjust this to change non-portable extern API prefix (e.g. Windows-only APIs). By default set to "pthread_".
 #ifndef PTHREAD_PERMIT_APINP
-#define PTHREAD_PERMIT_APINP(ret, api, params) PTHREAD_PERMIT_APIEXPORT ret pthread_##api##_np params
+#define PTHREAD_PERMIT_APINP(ret, api, params) PTHREAD_PERMIT_APIEXPORT ret PTHREAD_PERMIT_MANGLEAPINP(api) params
 #endif
-//! Adjust this to change non-portable extern API prefix (e.g. Windows-only APIs). By default set to "pthread_".
 #ifndef PTHREAD_PERMIT_API_DEFINENP
-#define PTHREAD_PERMIT_API_DEFINENP(ret, api, params) ret pthread_##api##_np params
+#define PTHREAD_PERMIT_API_DEFINENP(ret, api, params) ret PTHREAD_PERMIT_MANGLEAPINP(api) params
 #endif
 
 /*! \mainpage The POSIX threads permit objects
@@ -116,7 +121,7 @@ Studio 2010, GCC v4.6 and clang v3.2.
 The simple permit object costs 48/0/142 CPU cycles for grant/revoke/wait uncontended and 359/4/372
 cycles when contended between two threads. These results are for an Intel Core 2 processor.
 
-\section Why is it necessary that a permit object be added to POSIX threads?
+\section whynecessary Why is it necessary that a permit object be added to POSIX threads?
 There are many occasions in threaded programming when a third party library goes off and does
 something asynchronous in the background. In the meantime, the foreground thread may do other tasks,
 occasionally polling a notification object to see if the background job has completed, or indeed if
