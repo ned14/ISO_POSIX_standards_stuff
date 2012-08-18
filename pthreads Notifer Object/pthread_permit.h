@@ -54,7 +54,11 @@ typedef mtx_t pthread_mutex_t;
 #endif
 //! Adjust this to change extern API prefix and postfix. By default set to "pthread_" and "_np" respectively.
 #ifndef PTHREAD_PERMIT_MANGLEAPI
+#ifndef DOXYGEN_PREPROCESSOR
 #define PTHREAD_PERMIT_MANGLEAPI(api) pthread_##api##_np
+#else
+#define PTHREAD_PERMIT_MANGLEAPI(api) pthread_##api
+#endif
 #endif
 //! Adjust this to change non-portable extern API prefix (e.g. Windows-only APIs). By default set to "pthread_".
 #ifndef PTHREAD_PERMIT_MANGLEAPINP
