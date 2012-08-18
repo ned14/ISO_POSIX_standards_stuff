@@ -6,7 +6,7 @@ INPUT                  = pthread_permit.h
 SOURCE_BROWSER         = YES
 TYPEDEF_HIDES_STRUCT   = YES
 MACRO_EXPANSION        = YES
-PREDEFINED             = DOXYGEN_PREPROCESSOR
+PREDEFINED             = DOXYGEN_PREPROCESSOR PTHREAD_PERMIT_MANGLEAPI(api)=pthread_##api
 HIDE_UNDOC_MEMBERS     = YES
 GENERATE_MAN           = YES
 MAN_LINKS              = YES
